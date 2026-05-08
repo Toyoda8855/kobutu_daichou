@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>棚卸スキャナー — 府中センター</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#111;
+  --surface:#1c1c1e;
+  --surface2:#2c2c2e;
+  --border:#3a3a3c;
+  --text:#f2f2f7;
+  --text2:#aeaeb2;
+  --text3:#636366;
+  --accent:#0a84ff;
+  --success:#30d158;
+  --warn:#ff9f0a;
+  --danger:#ff453a;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans',sans-serif;overflow:hidden}
+
+/* ─── Layout ─── */
+.app{display:flex;flex-direction:column;height:100vh;height:100dvh}
+
+/* ─── Header ─── */
+.hdr{
+  background:var(--surface);
+  border-bottom:0.5px solid var(--border);
+  padding:12px 16px 10px;
+  padding-top:max(12px,env(safe-area-inset-top));
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;
+}
+.hdr-title{font-size:15px;font-weight:600;letter-spacing:-0.3px}
+.hdr-sub{font-size:11px;color:var(--text2);margin-top:1px}
+.hdr-count{
+  background:var(--accent);
+  color:#fff;
+  font-size:15px;font-weight:700;
+  min-width:36px;height:36px;
+  border-radius:18px;
+  display:flex;align-items:center;justify-content:center;
+  padding:0 10px;
+  transition:transform 0.15s;
+}
+.hdr-count.bump{transform:scale(1.35)}
+
+/* ─── Camera ─── */
+.cam-wrap{
+  position:relative;
+  flex:1;
+  background:#000;
+  overflow:hidden;
+  min-height:0;
+}
+video{width:100%;height:100%;object-fit:cover;display:block}
+canvas#scan-canvas{display:none}
+
+/* Scan overlay frame */
+.scan-frame{
+  position:absolute;
+  inset:0;
+  display:flex;align-items:center;justify-content:center;
+  pointer-events:none;
+}
+.scan-box{
+  width:220px;height:220px;
+  position:relative;
+}
+.scan-box::before,.scan-box::after,
+.scan-box .c3,.scan-box .c4{
+  content:'';
+  position:absolute;
+  width:28px;height:28px;
+  border-color:#fff;
+  border-style:solid;
+  opacity:0.85;
+}
+.scan-box::before{top:0;left:0;border-width:3px 0 0 3px;border-radius:3px 0 0 0}
+.scan-box::after {top:0;right:0;border-width:3px 3px 0 0;border-radius:0 3px 0 0}
+.scan-box .c3  {bottom:0;left:0;border-width:0 0 3px 3px;border-radius:0 0 0 3px}
+.scan-box .c4  {bottom:0;right:0;border-width:0 3px 3px 0;border-radius:0 0 3px 0}
+
+/* Scan line animation */
+.scan-line{
+  position:absolute;
+  left:4px;right:4px;
+  height:2px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);
+  top:50%;
+  animation:scanline 1.8s ease-in-out infinite;
+}
+@keyframes scanline{
+  0%{top:10%;opacity:0}
+  10%{opacity:1}
+  90%{opacity:1}
+  100%{top:90%;opacity:0}
+}
+
+/* Flash overlay */
+.flash-overlay{
+  position:absolute;
+  inset:0;
+  background:#fff;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity 0.05s;
+}
+.flash-overlay.flash{opacity:0.55}
+
+/* Status hint */
+.cam-hint{
+  position:absolute;
+  bottom:16px;left:50%;
+  transform:translateX(-50%);
+  background:rgba(0,0,0,0.55);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  color:#fff;
+  font-size:12px;
+  padding:5px 14px;
+  border-radius:20px;
+  white-space:nowrap;
+  transition:opacity 0.3s;
+}
+
+/* Pause button */
+.btn-pause{
+  position:absolute;
+  top:12px;right:12px;
+  background:rgba(0,0,0,0.5);
+  backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);
+  border:0.5px solid rgba(255,255,255,0.2);
+  border-radius:20px;
+  color:#fff;
+  font-size:12px;
+  padding:6px 14px;
+  cursor:pointer;
+  display:flex;align-items:center;gap:5px;
+}
+
+/* ─── Bottom panel ─── */
+.bottom{
+  background:var(--surface);
+  border-top:0.5px solid var(--border);
+  flex-shrink:0;
+  display:flex;flex-direction:column;
+  max-height:42vh;
+  padding-bottom:max(12px,env(safe-area-inset-bottom));
+}
+.bottom-hdr{
+  padding:10px 16px 8px;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;
+}
+.bottom-title{font-size:12px;font-weight:600;color:var(--text2)}
+.btn-sm{
+  background:var(--surface2);
+  border:0.5px solid var(--border);
+  border-radius:8px;
+  color:var(--text);
+  font-size:11px;
+  padding:5px 10px;
+  cursor:pointer;
+  display:inline-flex;align-items:center;gap:4px;
+}
+.btn-sm:active{opacity:0.7}
+.btn-sm.danger{color:var(--danger);border-color:var(--danger)}
+
+/* Scanned list */
+.scan-list-wrap{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0}
+.scan-list{padding:0 12px 4px}
+.scan-item{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 10px;
+  background:var(--surface2);
+  border-radius:10px;
+  margin-bottom:6px;
+  animation:slideIn 0.18s ease;
+}
+@keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.scan-item-num{
+  width:22px;height:22px;
+  background:var(--border);
+  border-radius:11px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:600;
+  color:var(--text2);
+  flex-shrink:0;
+}
+.scan-item-id{font-size:12px;font-family:monospace;color:var(--text);flex:1;word-break:break-all}
+.scan-item-badge{
+  font-size:10px;
+  padding:2px 7px;
+  border-radius:10px;
+  flex-shrink:0;
+}
+.badge-new{background:rgba(48,209,88,0.18);color:var(--success)}
+.badge-dup{background:rgba(255,159,10,0.18);color:var(--warn)}
+
+.empty-hint{
+  text-align:center;
+  padding:24px 0 16px;
+  color:var(--text3);
+  font-size:12px;
+  line-height:1.7;
+}
+
+/* ─── Action bar ─── */
+.action-bar{
+  padding:8px 12px 4px;
+  display:flex;gap:8px;
+  flex-shrink:0;
+}
+.btn-main{
+  flex:1;
+  background:var(--accent);
+  color:#fff;
+  border:none;
+  border-radius:12px;
+  font-size:14px;font-weight:600;
+  padding:13px 0;
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  -webkit-tap-highlight-color:transparent;
+}
+.btn-main:active{opacity:0.8}
+.btn-main:disabled{background:var(--surface2);color:var(--text3);cursor:default}
+.btn-main.copied{background:#30d158}
+.btn-reset{
+  background:var(--surface2);
+  border:0.5px solid var(--border);
+  border-radius:12px;
+  color:var(--danger);
+  font-size:13px;font-weight:600;
+  padding:13px 16px;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.btn-reset:active{opacity:0.7}
+
+/* ─── Toast ─── */
+.toast{
+  position:fixed;
+  bottom:100px;
+  left:50%;transform:translateX(-50%);
+  background:rgba(48,209,88,0.95);
+  color:#fff;
+  font-size:13px;font-weight:600;
+  padding:8px 20px;
+  border-radius:20px;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity 0.25s;
+  white-space:nowrap;
+  z-index:999;
+}
+.toast.show{opacity:1}
+
+/* ─── Error screen ─── */
+.err-screen{
+  position:absolute;inset:0;
+  background:#000;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;padding:32px;text-align:center;
+}
+.err-icon{font-size:48px}
+.err-title{font-size:17px;font-weight:600}
+.err-body{font-size:13px;color:var(--text2);line-height:1.6}
+.err-btn{
+  background:var(--accent);color:#fff;
+  border:none;border-radius:12px;
+  font-size:14px;font-weight:600;
+  padding:12px 28px;cursor:pointer;margin-top:4px;
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <div class="hdr">
+    <div>
+      <div class="hdr-title">📦 棚卸スキャナー</div>
+      <div class="hdr-sub">府中センター — QRコード読み取り</div>
+    </div>
+    <div class="hdr-count" id="scan-count">0</div>
+  </div>
+
+  <!-- Camera -->
+  <div class="cam-wrap" id="cam-wrap">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="scan-canvas"></canvas>
+
+    <!-- Scan frame -->
+    <div class="scan-frame">
+      <div class="scan-box">
+        <span class="c3"></span><span class="c4"></span>
+        <div class="scan-line"></div>
+      </div>
+    </div>
+
+    <!-- Flash -->
+    <div class="flash-overlay" id="flash"></div>
+
+    <!-- Hint -->
+    <div class="cam-hint" id="cam-hint">QRコードをフレームに合わせてください</div>
+
+    <!-- Pause -->
+    <button class="btn-pause" id="btn-pause" onclick="togglePause()">
+      <span id="pause-icon">⏸</span>
+      <span id="pause-label">一時停止</span>
+    </button>
+  </div>
+
+  <!-- Bottom panel -->
+  <div class="bottom">
+    <div class="bottom-hdr">
+      <div class="bottom-title">スキャン済み商品ID</div>
+      <button class="btn-sm danger" id="btn-del-last" onclick="deleteLast()" style="display:none">最後を削除</button>
+    </div>
+    <div class="scan-list-wrap">
+      <div class="scan-list" id="scan-list">
+        <div class="empty-hint" id="empty-hint">
+          まだスキャンされていません<br>
+          上のカメラでQRコードを読み取ってください
+        </div>
+      </div>
+    </div>
+    <div class="action-bar">
+      <button class="btn-main" id="btn-copy" onclick="copyAndFinish()" disabled>
+        <span>📋</span><span id="copy-label">コピーして終了</span>
+      </button>
+      <button class="btn-reset" onclick="resetAll()" title="リセット">🗑</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ───────────────────────────────────────────
+let scannedIds = [];       // unique IDs in order
+let allScanned  = [];       // all scan events (including dups)
+let paused = false;
+let stream  = null;
+let rafId   = null;
+
+const video   = document.getElementById('video');
+const canvas  = document.getElementById('scan-canvas');
+const ctx     = canvas.getContext('2d', {willReadFrequently: true});
+const flash   = document.getElementById('flash');
+const hint    = document.getElementById('cam-hint');
+const countEl = document.getElementById('scan-count');
+
+// ─── Camera start ─────────────────────────────────────
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: {ideal: 'environment'},
+        width:  {ideal: 1280},
+        height: {ideal: 720}
+      },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.addEventListener('loadedmetadata', () => {
+      video.play();
+      scanLoop();
+    });
+  } catch(e) {
+    showCameraError(e);
+  }
+}
+
+// ─── Scan loop ────────────────────────────────────────
+function scanLoop() {
+  if (paused) { rafId = requestAnimationFrame(scanLoop); return; }
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imgData.data, imgData.width, imgData.height, {
+      inversionAttempts: 'dontInvert'
+    });
+    if (code && code.data) {
+      handleScan(code.data.trim());
+    }
+  }
+  rafId = requestAnimationFrame(scanLoop);
+}
+
+// ─── Handle scan result ───────────────────────────────
+let lastScanTime = 0;
+const SCAN_COOLDOWN = 1500; // ms between same ID scans
+
+function handleScan(text) {
+  const now = Date.now();
+  // Global cooldown — prevents same ID firing 60x/sec
+  if (now - lastScanTime < SCAN_COOLDOWN) return;
+  lastScanTime = now;
+
+  const isDup = scannedIds.includes(text);
+
+  if (!isDup) {
+    scannedIds.push(text);
+    // Haptic + flash
+    flashScreen();
+    vibrate();
+  }
+  allScanned.push({id: text, time: now, dup: isDup});
+  renderList(isDup);
+  updateCount();
+}
+
+// ─── Flash ────────────────────────────────────────────
+function flashScreen() {
+  flash.classList.add('flash');
+  setTimeout(() => flash.classList.remove('flash'), 120);
+}
+
+// ─── Vibrate ──────────────────────────────────────────
+function vibrate() {
+  if ('vibrate' in navigator) {
+    navigator.vibrate([60]);
+  }
+}
+
+// ─── Render list ──────────────────────────────────────
+function renderList(lastWasDup) {
+  const list = document.getElementById('scan-list');
+  const empty = document.getElementById('empty-hint');
+  const delBtn = document.getElementById('btn-del-last');
+
+  if (scannedIds.length === 0) {
+    list.innerHTML = '';
+    list.appendChild(empty);
+    delBtn.style.display = 'none';
+    document.getElementById('btn-copy').disabled = true;
+    return;
+  }
+
+  empty.style.display = 'none';
+  delBtn.style.display = 'flex';
+  document.getElementById('btn-copy').disabled = false;
+
+  // Re-render last item only (or full refresh on dup)
+  if (lastWasDup) {
+    // Just show a brief dup toast, don't add to list
+    showToast('⚠️ 重複 — すでにスキャン済みです', '#ff9f0a');
+    return;
+  }
+
+  // Prepend new item
+  const idx = scannedIds.length;
+  const id  = scannedIds[scannedIds.length - 1];
+
+  const item = document.createElement('div');
+  item.className = 'scan-item';
+  item.id = `item-${idx}`;
+  item.innerHTML = `
+    <div class="scan-item-num">${idx}</div>
+    <div class="scan-item-id">${escHtml(id)}</div>
+    <div class="scan-item-badge badge-new">新規</div>
+  `;
+
+  // Insert at top
+  if (list.firstChild && list.firstChild.id !== 'empty-hint') {
+    list.insertBefore(item, list.firstChild);
+  } else {
+    list.appendChild(item);
+  }
+
+  hint.textContent = `✅ スキャン完了: ${id}`;
+  setTimeout(() => { hint.textContent = 'QRコードをフレームに合わせてください'; }, 2000);
+}
+
+function updateCount() {
+  countEl.textContent = scannedIds.length;
+  countEl.classList.add('bump');
+  setTimeout(() => countEl.classList.remove('bump'), 200);
+}
+
+// ─── Toggle pause ─────────────────────────────────────
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pause-icon').textContent  = paused ? '▶' : '⏸';
+  document.getElementById('pause-label').textContent = paused ? '再開' : '一時停止';
+  hint.textContent = paused ? '⏸ 一時停止中 — ボタンで再開' : 'QRコードをフレームに合わせてください';
+}
+
+// ─── Delete last ──────────────────────────────────────
+function deleteLast() {
+  if (scannedIds.length === 0) return;
+  const removed = scannedIds.pop();
+  // remove from DOM
+  const list = document.getElementById('scan-list');
+  const first = list.querySelector('.scan-item');
+  if (first) first.remove();
+  updateCount();
+  if (scannedIds.length === 0) {
+    document.getElementById('btn-del-last').style.display = 'none';
+    document.getElementById('btn-copy').disabled = true;
+    const empty = document.getElementById('empty-hint');
+    empty.style.display = '';
+    list.appendChild(empty);
+  }
+  showToast(`🗑 削除: ${removed}`, '#ff453a');
+}
+
+// ─── Reset all ────────────────────────────────────────
+function resetAll() {
+  if (scannedIds.length === 0) return;
+  if (!confirm(`${scannedIds.length}件のスキャン記録をリセットしますか？`)) return;
+  scannedIds = [];
+  allScanned = [];
+  const list = document.getElementById('scan-list');
+  list.innerHTML = '';
+  const empty = document.getElementById('empty-hint');
+  empty.style.display = '';
+  list.appendChild(empty);
+  document.getElementById('btn-del-last').style.display = 'none';
+  document.getElementById('btn-copy').disabled = true;
+  updateCount();
+  showToast('🔄 リセットしました', '#636366');
+}
+
+// ─── Copy & finish ────────────────────────────────────
+async function copyAndFinish() {
+  if (scannedIds.length === 0) return;
+  const text = scannedIds.join('\n');
+  const btn = document.getElementById('btn-copy');
+  const label = document.getElementById('copy-label');
+
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.classList.add('copied');
+    label.textContent = `✅ ${scannedIds.length}件コピー済み！`;
+    vibrate([30, 50, 30]);
+    showToast(`📋 ${scannedIds.length}件のIDをコピーしました`, '#30d158');
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      label.textContent = 'コピーして終了';
+    }, 3000);
+  } catch(e) {
+    // Fallback: show IDs in textarea prompt
+    showFallbackCopy(text);
+  }
+}
+
+function showFallbackCopy(text) {
+  const msg = `コピーできませんでした。以下を手動でコピーしてください:\n\n${text}`;
+  prompt('スキャン済みID一覧（全選択してコピー）:', text);
+}
+
+// ─── Toast ────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg, color) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = color ? `${color}f0` : 'rgba(48,209,88,0.95)';
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ─── Camera error ─────────────────────────────────────
+function showCameraError(err) {
+  const wrap = document.getElementById('cam-wrap');
+  let msg = 'カメラへのアクセスが拒否されました。';
+  if (err.name === 'NotFoundError') {
+    msg = 'カメラが見つかりません。カメラ付きデバイスで開いてください。';
+  } else if (err.name === 'NotAllowedError') {
+    msg = 'カメラの使用許可が必要です。\nブラウザの設定でカメラを許可してから再読み込みしてください。';
+  } else if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+    msg = 'カメラを使用するにはHTTPS接続が必要です。\nGitHub Pages等のHTTPS環境で開いてください。\n\n現在: ' + location.href;
+  }
+  wrap.innerHTML = `
+    <div class="err-screen">
+      <div class="err-icon">📷</div>
+      <div class="err-title">カメラを起動できません</div>
+      <div class="err-body">${msg.replace(/\n/g,'<br>')}</div>
+      <button class="err-btn" onclick="location.reload()">再試行</button>
+    </div>
+  `;
+}
+
+// ─── Escape HTML ──────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Vibrate overload ─────────────────────────────────
+function vibrate(pattern) {
+  if ('vibrate' in navigator) navigator.vibrate(pattern || [60]);
+}
+
+// ─── Boot ─────────────────────────────────────────────
+startCamera();
+</script>
+</body>
+</html>
