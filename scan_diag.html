@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>スキャン診断</title>
+<style>
+body{font-family:-apple-system,sans-serif;padding:20px;background:#111;color:#f2f2f7;margin:0}
+h2{font-size:16px;margin-bottom:16px}
+.item{background:#1c1c1e;border-radius:10px;padding:12px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.label{font-size:13px}
+.val{font-size:13px;font-weight:600}
+.ok{color:#30d158}.ng{color:#ff453a}.warn{color:#ff9f0a}
+.btn{display:block;width:100%;background:#0a84ff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;padding:14px;margin-top:16px;cursor:pointer}
+</style>
+</head>
+<body>
+<h2>&#128248; スキャン機能 診断</h2>
+
+<div class="item"><div class="label">HTTPS接続</div><div class="val" id="r-https">確認中</div></div>
+<div class="item"><div class="label">BarcodeDetector API</div><div class="val" id="r-barcode">確認中</div></div>
+<div class="item"><div class="label">QRコード対応</div><div class="val" id="r-qr">確認中</div></div>
+<div class="item"><div class="label">getUserMedia (カメラAPI)</div><div class="val" id="r-cam">確認中</div></div>
+<div class="item"><div class="label">iOS バージョン推定</div><div class="val" id="r-ios">確認中</div></div>
+<div class="item"><div class="label">推奨スキャン方式</div><div class="val" id="r-recommend" style="font-size:12px;text-align:right;max-width:55%">確認中</div></div>
+
+<button class="btn" onclick="runDiag()">診断を実行</button>
+<div id="detail" style="margin-top:16px;font-size:11px;color:#636366;font-family:monospace;line-height:1.8;white-space:pre-wrap"></div>
+
+<script>
+function set(id, text, cls){
+  var el=document.getElementById(id);
+  el.textContent=text;el.className='val '+(cls||'');
+}
+async function runDiag(){
+  var log='';
+
+  // HTTPS
+  var isHttps=location.protocol==='https:'||location.hostname==='localhost';
+  set('r-https', isHttps?'OK — '+location.protocol:'NG — '+location.protocol, isHttps?'ok':'ng');
+  log+='protocol: '+location.protocol+'\n';
+  log+='host: '+location.hostname+'\n';
+
+  // iOS version
+  var ua=navigator.userAgent;
+  log+='UA: '+ua.slice(0,80)+'\n';
+  var iosMatch=ua.match(/OS (\d+)_(\d+)/);
+  var iosVer=iosMatch?parseInt(iosMatch[1]):null;
+  set('r-ios', iosVer?'iOS '+iosVer:(ua.includes('iPhone')||ua.includes('iPad')?'iOS(不明)':'非iOS'), iosVer>=17?'ok':iosVer?'warn':'');
+
+  // BarcodeDetector
+  var hasBD='BarcodeDetector' in window;
+  set('r-barcode', hasBD?'OK — 利用可能':'NG — 非対応', hasBD?'ok':'ng');
+  log+='BarcodeDetector: '+(hasBD?'yes':'no')+'\n';
+
+  if(hasBD){
+    try{
+      var formats=await BarcodeDetector.getSupportedFormats();
+      var hasQR=formats.includes('qr_code');
+      set('r-qr', hasQR?'OK — QR対応':'NG — QR非対応', hasQR?'ok':'ng');
+      log+='formats: '+formats.join(', ')+'\n';
+    }catch(e){
+      set('r-qr','エラー: '+e.message,'ng');
+      log+='formats error: '+e.message+'\n';
+    }
+  }else{
+    set('r-qr','— (BarcodeDetector非対応)','warn');
+  }
+
+  // getUserMedia
+  var hasCam=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
+  set('r-cam', hasCam?'OK — 利用可能':'NG — 非対応', hasCam?'ok':'ng');
+  log+='getUserMedia: '+(hasCam?'yes':'no')+'\n';
+
+  // Recommend
+  var rec='';
+  if(hasBD){rec='BarcodeDetector方式\n(最良: ライブラリ不要)';}
+  else if(hasCam){rec='jsQR方式\n(ライブラリ必要)';}
+  else{rec='カメラAPI非対応\nブラウザを変更してください';}
+  set('r-recommend', rec, hasBD?'ok':hasCam?'warn':'ng');
+
+  document.getElementById('detail').textContent=log;
+}
+runDiag();
+</script>
+</body>
+</html>
