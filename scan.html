@@ -196,6 +196,7 @@ input:focus,select:focus{outline:none;}
 .status-bar.zaiko{background:#EAF3DE;color:#3F6F1F;}
 .status-bar.hanbai{background:#E6F1FB;color:#155A99;}
 .status-bar.cancel{background:#F1EFE8;color:#6B6E73;}
+.status-bar.shuppin{background:#FBEFD9;color:#7A5A00;}  /* v6.4: 出品中 */
 .result-error{
   background:#FBEFEF;border:1px solid #F0C9C9;color:#A02020;
   padding:14px 16px;border-radius:var(--radius);
@@ -204,6 +205,37 @@ input:focus,select:focus{outline:none;}
 .result-time{font-size:11px;color:var(--text-mute);margin-top:10px;text-align:right;}
 
 /* ============= 棚卸スキャンパネル ============= */
+/* ===== 棚コンテキストカード (v6.3) ===== */
+.shelf-ctx{
+  background:#fff;padding:12px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;
+}
+.shelf-ctx.set{background:linear-gradient(180deg,#E6F1FB,#fff);border-bottom:2px solid var(--primary);}
+.shelf-ctx.unset{background:#FFF8E1;border-bottom:2px solid var(--warning);}
+.shelf-ctx .ti-pin{font-size:30px;color:var(--primary);}
+.shelf-ctx.unset .ti-alert-circle{font-size:30px;color:var(--warning);}
+.shelf-ctx .body{flex:1;min-width:0;}
+.shelf-ctx .ttl{font-size:11px;font-weight:700;color:var(--text-sub);}
+.shelf-ctx .code{font-size:18px;font-weight:700;font-family:Menlo,Consolas,monospace;line-height:1.1;}
+.shelf-ctx .desc{font-size:11px;color:var(--text-mute);margin-top:2px;}
+.shelf-ctx.unset .msg{font-size:13px;font-weight:700;color:#A06B00;}
+.shelf-ctx .clear-btn{
+  width:38px;height:38px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text-sub);background:var(--bg);font-size:18px;
+}
+
+/* スキャンリスト内の棚切替セパレータ */
+.shelf-sep{
+  display:flex;align-items:center;gap:8px;
+  background:#F1F8FE;color:var(--primary);
+  padding:6px 14px;font-size:11.5px;font-weight:700;
+  font-family:Menlo,Consolas,monospace;
+  border-top:1px solid #C5DCEF;border-bottom:1px solid #C5DCEF;
+}
+.shelf-sep .ti{font-size:13px;}
+@keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-6px);} 75%{transform:translateX(6px);} }
+
 .inv-stats{
   display:flex;align-items:center;justify-content:space-between;
   background:#fff;padding:12px 14px;border-bottom:1px solid var(--border);
@@ -390,6 +422,13 @@ input:focus,select:focus{outline:none;}
 
     <!-- ===== 棚卸スキャンモード ===== -->
     <div id="invPanel" hidden>
+      <div id="shelfCtx" class="shelf-ctx unset">
+        <i class="ti ti-alert-circle"></i>
+        <div class="body">
+          <div class="msg">棚QRをまずスキャンしてください</div>
+          <div class="desc">先に棚QRを読み取ると、その棚の商品スキャンが記録されます</div>
+        </div>
+      </div>
       <div class="inv-stats">
         <span>スキャン済 <strong id="invCount">0</strong>件</span>
         <span id="invMonthLabel" style="font-size:11.5px;color:var(--text-mute);"></span>
@@ -493,6 +532,8 @@ const state = {
   lastScanData: null,
   lastScanTime: 0,
   log: [],
+  // --- v6.3: 棚コンテキスト ---
+  currentShelf: '',                // 現在スキャン中の棚コード（例: FC-S-03-01-03）
 };
 
 /* ============= ユーティリティ ============= */
@@ -1097,15 +1138,39 @@ function parseQR(data){
   // 一括で文字化け復元を試みる
   const fixed = fixEncoding(String(data||''));
   const parts = fixed.split('|');
+  // 先頭が 'SHELF' なら棚QR、'FC-...' なら商品QR
+  const head = (parts[0]||'').trim();
+  if(head === 'SHELF'){
+    return {
+      type:  'shelf',
+      code:  (parts[1]||'').trim(),
+      raw:   fixed,
+    };
+  }
   return {
-    id:   (parts[0]||'').trim(),
-    name: (parts[1]||'').trim(),
-    rank: (parts[2]||'').trim(),
-    raw:  fixed,
+    type:  'product',
+    id:    head,
+    name:  (parts[1]||'').trim(),
+    rank:  (parts[2]||'').trim(),
+    shelf: (parts[3]||'').trim(),   // 4番目=棚番号（旧QRは空文字・後方互換）
+    raw:   fixed,
   };
 }
 async function handleScan(data){
   const q = parseQR(data);
+
+  // 棚QRの場合（棚卸モードのみ意味を持つ）
+  if(q.type === 'shelf'){
+    if(state.mode !== 'inv'){
+      toast('棚QRは「棚卸スキャン」モードでのみ有効です', 'warn');
+      return;
+    }
+    try { if(navigator.vibrate) navigator.vibrate([40,40,40]); } catch(e){}
+    doShelfScan(q);
+    return;
+  }
+
+  // 商品QR（共通: 商品照会 / 棚卸スキャン）
   if(!q.id){
     toast('QR読取エラー（管理番号が空）', 'warn');
     return;
@@ -1117,6 +1182,27 @@ async function handleScan(data){
   }else{
     await doInvScan(q);
   }
+}
+
+/* ============= 棚QRスキャン（コンテキスト切替） ============= */
+function doShelfScan(q){
+  if(!q.code){
+    toast('棚QRエラー（棚コードが空）', 'warn');
+    return;
+  }
+  const prev = state.currentShelf;
+  state.currentShelf = q.code;
+  // 同じ棚を再スキャンした場合は確認メッセージのみ
+  if(prev === q.code){
+    toast('現在の棚: ' + q.code + '（変更なし）', 'success');
+  }else if(prev){
+    toast('棚を切替: ' + prev + ' → ' + q.code, 'success');
+    logLine('棚切替: ' + prev + ' → ' + q.code, 'ok');
+  }else{
+    toast('棚を確定: ' + q.code, 'success');
+    logLine('棚確定: ' + q.code, 'ok');
+  }
+  renderInvList();
 }
 
 /* ============= 商品照会モード ============= */
@@ -1159,8 +1245,9 @@ function renderLookupResult(p){
   result.hidden = false;
   let statusCls = '';
   if(p.status === '在庫中') statusCls = 'zaiko';
+  else if(p.status === '出品中') statusCls = 'shuppin';                            // v6.4
   else if(p.status === '販売済') statusCls = 'hanbai';
-  else if(p.status === 'キャンセル') statusCls = 'cancel';
+  else if(p.status === 'キャンセル' || p.status === 'キャンセル・返品') statusCls = 'cancel';
   result.innerHTML = `
     <div class="result-card">
       <div class="result-id">${escapeHtml(p.id)}</div>
@@ -1202,6 +1289,20 @@ async function refreshScans(){
   renderInvList();
 }
 async function doInvScan(q){
+  // 棚QRが未スキャンの場合は厳格警告（B案：商品スキャン拒否）
+  if(!state.currentShelf){
+    try { if(navigator.vibrate) navigator.vibrate([60,60,60,60,60]); } catch(e){}
+    toast('先に棚QRをスキャンしてください', 'error');
+    logLine('棚未確定で商品スキャン → 拒否: ' + q.id, 'err');
+    // 警告音を視覚的に強調
+    const ctx = document.getElementById('shelfCtx');
+    if(ctx){
+      ctx.classList.add('unset');
+      ctx.style.animation = 'shake 0.4s';
+      setTimeout(() => { ctx.style.animation = ''; }, 500);
+    }
+    return;
+  }
   // 重複チェック
   const existing = await idbGetByScannedId(q.id);
   if(existing && existing.length > 0){
@@ -1215,6 +1316,7 @@ async function doInvScan(q){
     scanned_id: q.id,
     scanned_name: q.name,
     scanned_rank: q.rank,
+    scanned_shelf: state.currentShelf,   // 現在の棚コンテキストを採用
     scanned_at: new Date().toISOString(),
     device: deviceLabel(),
     inventory_month: state.gas.month || currentYM(),
@@ -1232,6 +1334,9 @@ async function doInvScan(q){
   }
 }
 function renderInvList(){
+  // 棚コンテキストカードを更新
+  updateShelfCtxCard();
+
   const ul = $('#invList');
   const empty = $('#invEmpty');
   $('#invCount').textContent = state.scans.length;
@@ -1242,20 +1347,33 @@ function renderInvList(){
     return;
   }
   empty.style.display = 'none';
-  ul.innerHTML = state.scans.map(s => `
-    <li class="inv-row ${s.uploaded?'uploaded':''}" data-scan-id="${escapeHtml(s.scan_id)}">
+
+  // 棚切替セパレータ用：state.scans は新しい順なので prev = scans[i-1] が時系列の後（新しい方）
+  // 各scanについて、その scanned_shelf が prev と異なれば、その上にセパレータを挿入する
+  const parts = [];
+  state.scans.forEach((s, i) => {
+    const prev = state.scans[i-1];
+    const isShelfTransition = !prev || (prev.scanned_shelf||'') !== (s.scanned_shelf||'');
+    if(isShelfTransition){
+      const sh = s.scanned_shelf || '(棚未確定)';
+      parts.push(`<li class="shelf-sep"><i class="ti ti-pin"></i>棚: ${escapeHtml(sh)}</li>`);
+    }
+    parts.push(`<li class="inv-row ${s.uploaded?'uploaded':''}" data-scan-id="${escapeHtml(s.scan_id)}">
       <div class="info">
         <div class="id">${escapeHtml(s.scanned_id)}</div>
         <div class="nm">${escapeHtml(s.scanned_name||'(品名なし)')}</div>
         <div class="meta">
           <span class="rk">${escapeHtml(s.scanned_rank||'-')}</span>
+          <span>棚: ${s.scanned_shelf?escapeHtml(s.scanned_shelf):'—'}</span>
           <span>${escapeHtml(fmtYMD(s.scanned_at))}</span>
           ${s.uploaded?'<span class="up">✓送信済</span>':''}
         </div>
       </div>
       <button class="del" data-del-id="${escapeHtml(s.scan_id)}" aria-label="削除"><i class="ti ti-trash"></i></button>
-    </li>
-  `).join('');
+    </li>`);
+  });
+  ul.innerHTML = parts.join('');
+
   ul.querySelectorAll('.del').forEach(b => {
     b.addEventListener('click', e => {
       e.stopPropagation();
@@ -1263,6 +1381,44 @@ function renderInvList(){
       onDeleteScan(id);
     });
   });
+}
+
+/* 棚コンテキストカードの表示更新 */
+function updateShelfCtxCard(){
+  const ctx = document.getElementById('shelfCtx');
+  if(!ctx) return;
+  if(state.currentShelf){
+    ctx.classList.remove('unset');
+    ctx.classList.add('set');
+    ctx.innerHTML = `
+      <i class="ti ti-pin"></i>
+      <div class="body">
+        <div class="ttl">現在の棚</div>
+        <div class="code">${escapeHtml(state.currentShelf)}</div>
+        <div class="desc">この棚にある商品QRをスキャンしてください</div>
+      </div>
+      <button class="clear-btn" id="shelfClearBtn" title="棚をクリア"><i class="ti ti-x"></i></button>
+    `;
+    const cb = document.getElementById('shelfClearBtn');
+    if(cb) cb.addEventListener('click', () => {
+      if(!confirm('現在の棚コンテキストをクリアしますか？\n（クリア後は商品スキャン前に再度棚QRをスキャンする必要があります）')) return;
+      const prev = state.currentShelf;
+      state.currentShelf = '';
+      logLine('棚クリア: ' + prev);
+      toast('棚をクリアしました');
+      renderInvList();
+    });
+  }else{
+    ctx.classList.remove('set');
+    ctx.classList.add('unset');
+    ctx.innerHTML = `
+      <i class="ti ti-alert-circle"></i>
+      <div class="body">
+        <div class="msg">棚QRをまずスキャンしてください</div>
+        <div class="desc">先に棚QRを読み取ると、その棚の商品スキャンが記録されます</div>
+      </div>
+    `;
+  }
 }
 async function onDeleteScan(scanId){
   if(!confirm('このスキャン記録を削除しますか？')) return;
@@ -1348,6 +1504,19 @@ async function onGenerateReport(){
   }
 }
 
+/* 棚番号一致判定 */
+function shelfMatchLabel(registeredShelf, scannedShelf){
+  // どちらも空 → 「未登録」
+  if(!registeredShelf && !scannedShelf) return '未登録';
+  // スキャン時の棚番号が空（旧QRフォーマット）→ 「確認不可」
+  if(!scannedShelf) return '確認不可';
+  // 台帳の棚番号だけ空 → 「台帳未登録」
+  if(!registeredShelf) return '台帳未登録';
+  // 大小文字・全角空白を統一して比較
+  const norm = s => String(s).trim().replace(/　/g,' ').toLowerCase();
+  return norm(registeredShelf) === norm(scannedShelf) ? '一致' : '不一致';
+}
+
 function buildAndDownloadReport(products, scans){
   // スキャンID集合・スキャン日時マップ
   const scannedMap = new Map();
@@ -1359,19 +1528,38 @@ function buildAndDownloadReport(products, scans){
 
   products.forEach(p => {
     const sid = String(p.id);
-    if(p.status === '在庫中'){
+    // v6.4: 在庫中・出品中 を「物理在庫」として同じく扱う
+    if(p.status === '在庫中' || p.status === '出品中'){
       if(scannedMap.has(sid)){
         const sc = scannedMap.get(sid);
-        rows.push(['一致', p.id, p.name||'', p.cat||'', p.rank||'', p.shelf||'', p.status||'', p.channel||'', p.date||'', sc.scanned_at||'']);
+        rows.push([
+          '一致', p.id, p.name||'', p.cat||'', p.rank||'',
+          p.shelf||'',                    // 台帳登録棚番号
+          sc.scanned_shelf||'',           // スキャン時棚番号
+          shelfMatchLabel(p.shelf, sc.scanned_shelf), // 棚番号一致
+          p.status||'', p.channel||'', p.date||'', sc.scanned_at||''
+        ]);
         cMatch++;
       }else{
-        rows.push(['未スキャン', p.id, p.name||'', p.cat||'', p.rank||'', p.shelf||'', p.status||'', p.channel||'', p.date||'', '']);
+        rows.push([
+          '未スキャン', p.id, p.name||'', p.cat||'', p.rank||'',
+          p.shelf||'',  // 台帳登録棚番号
+          '',           // スキャン時棚番号（スキャンなし）
+          '',           // 棚番号一致（スキャンなし）
+          p.status||'', p.channel||'', p.date||'', ''
+        ]);
         cUnscanned++;
       }
     }else if(p.status === '販売済'){
       if(scannedMap.has(sid)){
         const sc = scannedMap.get(sid);
-        rows.push(['販売済なのにスキャン', p.id, p.name||'', p.cat||'', p.rank||'', p.shelf||'', p.status||'', p.channel||'', p.date||'', sc.scanned_at||'']);
+        rows.push([
+          '販売済なのにスキャン', p.id, p.name||'', p.cat||'', p.rank||'',
+          p.shelf||'',
+          sc.scanned_shelf||'',
+          shelfMatchLabel(p.shelf, sc.scanned_shelf),
+          p.status||'', p.channel||'', p.date||'', sc.scanned_at||''
+        ]);
         cSold++;
       }
     }
@@ -1381,7 +1569,13 @@ function buildAndDownloadReport(products, scans){
   scans.forEach(s => {
     if(!productIds.has(String(s.scanned_id))){
       unknowns.push(s);
-      rows.push(['不明品', s.scanned_id, s.scanned_name||'(不明)', '', s.scanned_rank||'', '', '(不明)', '', '', s.scanned_at||'']);
+      rows.push([
+        '不明品', s.scanned_id, s.scanned_name||'(不明)', '', s.scanned_rank||'',
+        '',                       // 台帳登録棚番号（不明品のため空）
+        s.scanned_shelf||'',      // スキャン時棚番号
+        '',                       // 棚番号一致（台帳に存在しないため空）
+        '(不明)', '', '', s.scanned_at||''
+      ]);
       cUnknown++;
     }
   });
@@ -1393,12 +1587,31 @@ function buildAndDownloadReport(products, scans){
   const total = cMatch + cUnscanned + cSold + cUnknown;
   const pct = (n) => total ? (n/total*100).toFixed(1)+'%' : '-';
 
+  // 棚番号の集計（列インデックス 7 が「棚番号一致」）
+  const cShelfMismatch = rows.filter(r => r[7] === '不一致').length;
+  const cShelfUnknown  = rows.filter(r => r[7] === '確認不可').length;
+
   // ===== シート1: 照合結果一覧 =====
-  const sh1Header = ['分類','管理番号','商品名','部門','ランク','棚番号','ステータス','販路','入荷日','スキャン日時'];
+  const sh1Header = [
+    '分類','管理番号','商品名','部門','ランク',
+    '台帳登録棚番号','スキャン時棚番号','棚番号一致',
+    'ステータス','販路','入荷日','スキャン日時'
+  ];
   const sh1 = [sh1Header, ...rows];
   const ws1 = XLSX.utils.aoa_to_sheet(sh1);
   ws1['!cols'] = [
-    {wch:18},{wch:18},{wch:30},{wch:6},{wch:6},{wch:10},{wch:10},{wch:10},{wch:12},{wch:22}
+    {wch:18},  // 分類
+    {wch:20},  // 管理番号
+    {wch:30},  // 商品名
+    {wch:6},   // 部門
+    {wch:6},   // ランク
+    {wch:12},  // 台帳登録棚番号
+    {wch:14},  // スキャン時棚番号
+    {wch:10},  // 棚番号一致
+    {wch:12},  // ステータス
+    {wch:10},  // 販路
+    {wch:12},  // 入荷日
+    {wch:22},  // スキャン日時
   ];
   if(sh1.length > 1){
     ws1['!autofilter'] = { ref: XLSX.utils.encode_range({s:{c:0,r:0},e:{c:sh1Header.length-1,r:sh1.length-1}}) };
@@ -1413,9 +1626,13 @@ function buildAndDownloadReport(products, scans){
     ['不明品', cUnknown, pct(cUnknown)],
     ['合計', total, ''],
     [],
+    ['棚番号集計（一致/不一致など）',''],
+    ['棚番号不一致', cShelfMismatch, total ? (cShelfMismatch/total*100).toFixed(1)+'%' : '-'],
+    ['棚番号確認不可（旧QR）', cShelfUnknown, ''],
+    [],
     ['参考情報',''],
     ['スキャン件数（全）', scans.length, ''],
-    ['システム在庫中件数', products.filter(p=>p.status==='在庫中').length, ''],
+    ['システム物理在庫件数（在庫中＋出品中）', products.filter(p=>p.status==='在庫中' || p.status==='出品中').length, ''],
     ['対象月', state.gas.month||currentYM(), ''],
     ['出力日時', new Date().toLocaleString('ja-JP',{hour12:false}), ''],
   ];
@@ -1423,14 +1640,40 @@ function buildAndDownloadReport(products, scans){
   ws2['!cols'] = [{wch:26},{wch:12},{wch:12}];
 
   // ===== シート3: 不明品リスト =====
-  const sh3Header = ['管理番号（スキャン読取）','商品名','ランク','スキャン日時','デバイス','対象月'];
+  const sh3Header = ['管理番号（スキャン読取）','商品名','ランク','スキャン時棚番号','スキャン日時','デバイス','対象月'];
   const sh3 = [sh3Header, ...unknowns.map(s => [
-    s.scanned_id, s.scanned_name||'', s.scanned_rank||'', s.scanned_at||'', s.device||'', s.inventory_month||'',
+    s.scanned_id, s.scanned_name||'', s.scanned_rank||'', s.scanned_shelf||'', s.scanned_at||'', s.device||'', s.inventory_month||'',
   ])];
   const ws3 = XLSX.utils.aoa_to_sheet(sh3);
-  ws3['!cols'] = [{wch:22},{wch:30},{wch:8},{wch:22},{wch:10},{wch:10}];
+  ws3['!cols'] = [{wch:22},{wch:30},{wch:8},{wch:14},{wch:22},{wch:10},{wch:10}];
   if(sh3.length > 1){
     ws3['!autofilter'] = { ref: XLSX.utils.encode_range({s:{c:0,r:0},e:{c:sh3Header.length-1,r:sh3.length-1}}) };
+  }
+
+  // ===== シート4: 棚番号不一致リスト（新設） =====
+  const sh4Header = ['管理番号','商品名','部門','ランク','台帳登録棚番号','スキャン時棚番号','入荷日','スキャン日時'];
+  const mismatchRows = rows.filter(r => r[7] === '不一致');
+  let sh4;
+  if(mismatchRows.length === 0){
+    sh4 = [['棚番号の不一致はありませんでした']];
+  }else{
+    sh4 = [sh4Header, ...mismatchRows.map(r => [
+      r[1],   // 管理番号
+      r[2],   // 商品名
+      r[3],   // 部門
+      r[4],   // ランク
+      r[5],   // 台帳登録棚番号
+      r[6],   // スキャン時棚番号
+      r[10],  // 入荷日
+      r[11],  // スキャン日時
+    ])];
+  }
+  const ws4 = XLSX.utils.aoa_to_sheet(sh4);
+  if(mismatchRows.length > 0){
+    ws4['!cols'] = [{wch:20},{wch:30},{wch:6},{wch:6},{wch:14},{wch:14},{wch:12},{wch:22}];
+    ws4['!autofilter'] = { ref: XLSX.utils.encode_range({s:{c:0,r:0},e:{c:sh4Header.length-1,r:sh4.length-1}}) };
+  }else{
+    ws4['!cols'] = [{wch:40}];
   }
 
   // ===== ファイル組み立て =====
@@ -1438,6 +1681,7 @@ function buildAndDownloadReport(products, scans){
   XLSX.utils.book_append_sheet(wb, ws1, '照合結果一覧');
   XLSX.utils.book_append_sheet(wb, ws2, '差異サマリー');
   XLSX.utils.book_append_sheet(wb, ws3, '不明品リスト');
+  XLSX.utils.book_append_sheet(wb, ws4, '棚番号不一致リスト');
 
   const ym = (state.gas.month||currentYM()).replace('-','');
   const filename = `棚卸照合_${ym}_府中センター.xlsx`;
