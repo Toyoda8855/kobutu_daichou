@@ -161,6 +161,7 @@ table.ledger tbody tr.active{background:var(--primary-light);}
 .status-pill.in{background:#E6F1FB;color:#155A99;}
 .status-pill.sold{background:#DEF2E2;color:#176939;}
 .status-pill.cancel{background:#EDEAE3;color:#6B655A;}
+.status-pill.listed{background:#FBEFD9;color:#7A5A00;}  /* v6.4: 出品中 */
 .status-pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}
 .empty-state{
   padding:80px 20px;text-align:center;
@@ -625,6 +626,68 @@ table.data-table tbody tr:hover{background:#F8FAFC;}
 }
 .inline-label{font-size:11.5px;color:var(--text-sub);font-weight:600;margin-right:6px;}
 
+
+/* ============================================================
+   v6.3 追加スタイル: 棚マスタタブ
+   ============================================================ */
+.shelf-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:14px;margin-bottom:16px;
+}
+.shelf-stat-card{
+  background:#fff;border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 16px;display:flex;flex-direction:column;gap:4px;
+}
+.shelf-stat-card .lbl{font-size:11.5px;color:var(--text-mute);font-weight:600;}
+.shelf-stat-card .val{font-size:24px;font-weight:700;font-family:Menlo,Consolas,monospace;}
+.shelf-stat-card.S .val{color:#1E88E5;}
+.shelf-stat-card.N .val{color:#1F9D55;}
+.shelf-stat-card.A .val{color:#A04A14;}
+
+.shelf-area-pill{
+  display:inline-block;padding:2px 7px;border-radius:8px;
+  font-size:10.5px;font-weight:700;font-family:Menlo,Consolas,monospace;
+}
+.shelf-area-pill.S{background:#E6F1FB;color:#155A99;}
+.shelf-area-pill.N{background:#E7F5EC;color:#1F6B30;}
+.shelf-area-pill.A{background:#FBE9E1;color:#A04A14;}
+
+.shelf-toolbar{
+  display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+  padding:10px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+  margin-bottom:12px;
+}
+.shelf-toolbar .filter-select{height:32px;}
+.shelf-toolbar .spacer{flex:1;}
+
+.shelf-list-table{
+  width:100%;border-collapse:collapse;font-size:12px;background:#fff;
+}
+.shelf-list-table th{
+  background:var(--primary);color:#fff;font-weight:600;
+  padding:7px 8px;text-align:left;white-space:nowrap;font-size:11px;
+  position:sticky;top:0;z-index:1;
+}
+.shelf-list-table td{
+  padding:5px 8px;border-bottom:1px solid var(--border);
+  white-space:nowrap;
+}
+.shelf-list-table tr:hover td{background:#FAFAFA;}
+.shelf-list-table .code{font-family:Menlo,Consolas,monospace;font-weight:700;}
+.shelf-list-table .gold{background:#FFF8E1 !important;}
+.shelf-list-table-wrap{
+  max-height:540px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);
+}
+
+/* 棚ラベル印刷プレビュー用 */
+@media print {
+  .shelf-print-page{
+    page-break-after:always;
+    height:auto;
+  }
+  .shelf-print-page:last-child{page-break-after:auto;}
+}
+
 /* 空ステート（売上0件など） */
 .empty-mini{
   padding:40px 16px;text-align:center;color:var(--text-mute);font-size:13px;
@@ -876,6 +939,7 @@ table.data-table tbody tr:hover{background:#F8FAFC;}
     <button class="tab" data-view="inventory"><i class="ti ti-clipboard-check"></i>棚卸</button>
     <button class="tab" data-view="vendor"><i class="ti ti-book"></i>古物台帳</button>
     <button class="tab" data-view="import"><i class="ti ti-file-import"></i>インポート</button>
+    <button class="tab" data-view="shelves"><i class="ti ti-rectangular-prism"></i>棚マスタ</button>
     <button class="tab" data-view="settings"><i class="ti ti-settings"></i>設定</button>
   </nav>
 
@@ -890,8 +954,9 @@ table.data-table tbody tr:hover{background:#F8FAFC;}
       <select id="filterStatus" class="filter-select">
         <option value="">すべて</option>
         <option value="在庫中">在庫中</option>
+        <option value="出品中">出品中</option>
         <option value="販売済">販売済</option>
-        <option value="キャンセル">キャンセル</option>
+        <option value="キャンセル・返品">キャンセル・返品</option>
       </select>
     </div>
     <div class="filter-group">
@@ -943,6 +1008,9 @@ table.data-table tbody tr:hover{background:#F8FAFC;}
 
   <!-- ========== Excelインポートビュー（フェーズ3） ========== -->
   <div class="view-content" id="viewImport"></div>
+
+  <!-- ========== 棚マスタビュー（v6.3） ========== -->
+  <div class="view-content" id="viewShelves"></div>
 
   <!-- ========== 設定ビュー（フェーズ3-B GAS連携） ========== -->
   <div class="view-content" id="viewSettings"></div>
@@ -1043,6 +1111,11 @@ let state = {
   monthlyBudget: 3000000,  // 仕様書11章: 月間目標
   invFilterCat: '',
   invMonth: '',
+  // --- v6.1 古物台帳フィルタ ---
+  vendorFilter: { requiredOnly:false, expiringOnly:false },
+  // --- v6.3 棚マスタ ---
+  shelves: [],            // [{code, area, col, row, level, note}]
+  shelvesFilter: { area:'', goldenOnly:false, query:'' },
   // --- フェーズ3追加 ---
   importDraft: null,   // { fileName, rows(2次元配列), mapping, mode, parsed(整形済), counters }
   // --- フェーズ3-(B) GAS方式 Google Sheets連携 ---
@@ -1104,6 +1177,35 @@ function saveInv(){
    =========================================================== */
 function fmtDate(s){ if(!s) return ''; return s.replaceAll('-','/'); }
 function fmtYen(n){ if(n===''||n==null||isNaN(n)) return '—'; return '¥'+Number(n).toLocaleString('ja-JP'); }
+// v6.5: 仕入価格専用フォーマット（0円 = 100円未満として表示）
+function fmtCost(n){
+  if(n===''||n==null||isNaN(n)) return '—';
+  if(Number(n) === 0) return '100円未満';
+  return '¥'+Number(n).toLocaleString('ja-JP');
+}
+
+
+/* ===========================================================
+   v6.4: ステータス判定ヘルパー
+   - 在庫中・出品中 = 物理在庫としてセンター内にある（棚卸対象）
+   - 販売済・キャンセル・返品 = クローズ済（古物台帳の3年保存対象）
+   =========================================================== */
+function isInStock(p){
+  return p && (p.status === '在庫中' || p.status === '出品中');
+}
+function isClosed(p){
+  return p && (p.status === '販売済' || p.status === 'キャンセル・返品' || p.status === 'キャンセル');
+}
+
+/* ===========================================================
+   フェーズ4（v6.1）: 古物営業法第16条 完全準拠用ヘルパー
+   =========================================================== */
+// ¥10,000以上、または記録必須部門（M=メディア / G=ゲーム）で true
+function requiresVendorRecord(cost, cat){
+  const MANDATORY_CATS = ['M','G'];
+  return Number(cost) >= 10000 || MANDATORY_CATS.includes(cat);
+}
+
 function todayISO(){
   const d = new Date();
   const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
@@ -1205,7 +1307,8 @@ function renderTable(){
     const cat = CATS_MAP[p.cat] || {name:p.cat,icon:'ti-box'};
     let statusCls = 'in', statusText = p.status||'在庫中';
     if(p.status==='販売済'){statusCls='sold';}
-    else if(p.status==='キャンセル'){statusCls='cancel';}
+    else if(p.status==='キャンセル' || p.status==='キャンセル・返品'){statusCls='cancel';}
+    else if(p.status==='出品中'){statusCls='listed';}
     let rankCls = '';
     if(['特S','TS'].includes(p.rank)) rankCls='top';
     else if(['TA','MS','MA'].includes(p.rank)) rankCls='high';
@@ -1217,7 +1320,7 @@ function renderTable(){
       <td>${escapeHtml(p.shelf||'')}</td>
       <td>${p.rank?`<span class="rank-pill ${rankCls}">${escapeHtml(p.rank)}</span>`:''}</td>
       <td>${escapeHtml(fmtDate(p.date))}</td>
-      <td class="text-right">${fmtYen(p.cost)}</td>
+      <td class="text-right">${fmtCost(p.cost)}</td>
       <td><span class="status-pill ${statusCls}">${escapeHtml(statusText)}</span></td>
       <td>${escapeHtml(p.channel||'')}</td>
     </tr>`;
@@ -1274,7 +1377,8 @@ function emptyDraft(){
     cat:'', rank:'', cond:'',
     shelf:'', date: todayISO(), cost:'',
     desc:'',
-    vendor:{ type:'個人', name:'', company:'', address:'', docType:'', docNumber:'' },
+    vendor:{ type:'個人', name:'', company:'', address:'', docType:'', docNumber:'',
+             occupation:'', age:'', dealType:'買受', feature:'', siteNote:'' },
   };
 }
 function openNewPanel(){
@@ -1406,48 +1510,87 @@ function renderStep2(){
         </select>
       </div>
       <div class="field">
-        <label class="lbl">仕入価格（円） <span class="req">*</span></label>
-        <input type="number" class="txt" data-bind="cost" value="${escapeHtml(d.cost)}" min="0" step="1" placeholder="0">
+        <label class="lbl">仕入価格 <span class="req">*</span></label>
+        <div style="display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:#FAFBFD;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
+            <input type="radio" name="costMode" value="under100" ${(Number(d.cost)===0 && d.cost!=='')?'checked':''}>
+            <span>100円未満（一律で登録）</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
+            <input type="radio" name="costMode" value="manual" ${(d.cost===''||Number(d.cost)>=100)?'checked':''}>
+            <span>個別入力</span>
+            <input type="number" class="txt" id="costManualInput" value="${(Number(d.cost)>=100)?escapeHtml(d.cost):''}" min="100" step="1" placeholder="例：1500" style="width:140px;margin-left:6px;" ${(Number(d.cost)===0 && d.cost!=='')?'disabled':''}>
+            <span style="font-size:12px;color:var(--text-mute);">円（100円以上）</span>
+          </label>
+        </div>
       </div>
     </div>
   `;
 }
 
 function renderStep3(){
-  const v = state.newDraft.vendor;
+  const d = state.newDraft;
+  const v = d.vendor;
+  const required = requiresVendorRecord(d.cost, d.cat);
   const docOpts = DOC_TYPES.map(t => `<option value="${t}" ${v.docType===t?'selected':''}>${t}</option>`).join('');
+  const dealOpts = ['買受','委託','交換'].map(t => `<option value="${t}" ${(v.dealType||'買受')===t?'selected':''}>${t}</option>`).join('');
   const isCorp = v.type==='法人';
+  const reqLabel = required ? '<span class="req">（必須）</span>' : '<span class="opt">（任意）</span>';
+
+  const bannerStyle = required
+    ? 'margin:0 0 12px;padding:10px 12px;background:#FFF1F0;border:1px solid #E53935;border-radius:6px;color:#B71C1C;'
+    : 'margin:0 0 12px;padding:8px 10px;background:#FFF8E6;border:1px solid #F2DFA4;border-radius:6px;color:#7A5A00;';
+  const bannerText = required
+    ? '<strong>古物営業法 第16条：法的記載必須</strong>　' +
+      '（仕入価格 ¥10,000 以上 もしくは メディア(M)・ゲーム(G)部門のため、住所・氏名・職業・年齢・確認書類は法律で記載が義務付けられています）' +
+      '<br><span style="font-weight:600;">※ 情報が手元にない場合は空欄のまま登録できます。後で見返して入力できるよう「現場情報（備考）」欄に手がかりを残してください。</span>'
+    : '古物営業法 第16条に基づく取引記録欄。<strong>取引価額が ¥10,000 を超える場合のみ記載必須</strong>のため、本欄はすべて<strong>任意入力</strong>です。空欄のまま登録できます。';
+
   return `
+    <div class="field">
+      <label class="lbl">取引区分 <span class="req">*</span></label>
+      <select class="txt" data-vbind="dealType">${dealOpts}</select>
+    </div>
     <div class="type-toggle" id="vendorTypeToggle">
       <button class="${!isCorp?'active':''}" data-vtype="個人">個人</button>
       <button class="${isCorp?'active':''}" data-vtype="法人">法人</button>
     </div>
-    <p class="help" style="margin:0 0 12px;padding:8px 10px;background:#FFF8E6;border:1px solid #F2DFA4;border-radius:6px;color:#7A5A00;">
+    <p class="help" style="${bannerStyle}">
       <i class="ti ti-info-circle" style="vertical-align:-2px;"></i>
-      古物営業法 第16条に基づく取引記録欄。<strong>取引価額が ¥10,000 を超える場合のみ記載必須</strong>のため、本欄はすべて<strong>任意入力</strong>です。空欄のまま登録できます。
+      ${bannerText}
     </p>
     ${isCorp ? `
       <div class="field">
-        <label class="lbl">会社名 <span class="opt">（任意）</span></label>
+        <label class="lbl">会社名 ${reqLabel}</label>
         <input type="text" class="txt" data-vbind="company" value="${escapeHtml(v.company)}">
       </div>
       <div class="field">
-        <label class="lbl">代表者氏名 <span class="opt">（任意）</span></label>
+        <label class="lbl">代表者氏名 ${reqLabel}</label>
         <input type="text" class="txt" data-vbind="name" value="${escapeHtml(v.name)}">
       </div>
     ` : `
       <div class="field">
-        <label class="lbl">氏名 <span class="opt">（任意）</span></label>
+        <label class="lbl">氏名 ${reqLabel}</label>
         <input type="text" class="txt" data-vbind="name" value="${escapeHtml(v.name)}">
       </div>
     `}
     <div class="field">
-      <label class="lbl">住所 <span class="opt">（任意）</span></label>
+      <label class="lbl">住所 ${reqLabel}</label>
       <input type="text" class="txt" data-vbind="address" value="${escapeHtml(v.address)}">
     </div>
     <div class="row2">
       <div class="field">
-        <label class="lbl">確認書類 <span class="opt">（任意）</span></label>
+        <label class="lbl">職業 ${reqLabel}</label>
+        <input type="text" class="txt" data-vbind="occupation" value="${escapeHtml(v.occupation||'')}" placeholder="例：会社員 / 主婦 / 自営業">
+      </div>
+      <div class="field">
+        <label class="lbl">年齢 ${reqLabel}</label>
+        <input type="number" class="txt" data-vbind="age" value="${escapeHtml(v.age||'')}" min="0" max="150" placeholder="半角数字">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label class="lbl">確認書類 ${reqLabel}</label>
         <select class="txt" data-vbind="docType">
           <option value="">選択してください</option>
           ${docOpts}
@@ -1456,6 +1599,18 @@ function renderStep3(){
       <div class="field">
         <label class="lbl">書類番号 <span class="opt">（任意）</span></label>
         <input type="text" class="txt" data-vbind="docNumber" value="${escapeHtml(v.docNumber)}">
+      </div>
+    </div>
+    <div class="field">
+      <label class="lbl">古物の特徴 <span class="opt">（任意）</span></label>
+      <textarea class="txt" data-vbind="feature" placeholder="例：赤 / Sサイズ / キズあり / CASIO製 / 品番EF-130D">${escapeHtml(v.feature||'')}</textarea>
+    </div>
+    <div class="field">
+      <label class="lbl">現場情報（備考）<span class="opt">（後で必須項目を入力するための手がかりメモ）</span></label>
+      <textarea class="txt" data-vbind="siteNote" placeholder="例：○○リサイクル様より引取 / 伝票No.1234 / TUNAG現場ID:F0506 / 本人確認は現場見積書を参照">${escapeHtml(v.siteNote||'')}</textarea>
+      <div style="font-size:11px;color:var(--text-mute);margin-top:4px;line-height:1.4;">
+        ※ 古物台帳の必須項目を後で入力する際の手がかりを残しておく欄です。<br>
+        ※ 仕入伝票No.・引取先・連絡先・TUNAG現場ID など、後でこの欄を見れば取引相手情報を遡れる情報を記入してください。
       </div>
     </div>
   `;
@@ -1483,19 +1638,24 @@ function renderStep4(){
         ${row('棚番号', escapeHtml(d.shelf), !d.shelf)}
         ${row('ランク', escapeHtml(d.rank), !d.rank)}
         ${row('状態', escapeHtml(d.cond), !d.cond)}
-        ${row('仕入価格', fmtYen(d.cost))}
+        ${row('仕入価格', fmtCost(d.cost))}
         ${row('備考', escapeHtml(d.desc), !d.desc)}
       </div>
     </div>
     <div class="confirm-section">
-      <h4><i class="ti ti-book"></i> 古物台帳情報</h4>
+      <h4><i class="ti ti-book"></i> 古物台帳情報${requiresVendorRecord(d.cost, d.cat)?' <span class="req" style="font-size:11px;">（法的記録必須）</span>':''}</h4>
       <div class="confirm-table">
-        ${row('区分', escapeHtml(v.type))}
+        ${row('取引区分', escapeHtml(v.dealType||'買受'))}
+        ${row('取引相手区分', escapeHtml(v.type))}
         ${v.type==='法人' ? row('会社名', escapeHtml(v.company), !v.company) : ''}
         ${row(v.type==='法人'?'代表者氏名':'氏名', escapeHtml(v.name), !v.name)}
         ${row('住所', escapeHtml(v.address), !v.address)}
+        ${row('職業', escapeHtml(v.occupation||''), !v.occupation)}
+        ${row('年齢', escapeHtml(v.age||''), !v.age)}
         ${row('確認書類', escapeHtml(v.docType), !v.docType)}
         ${row('書類番号', escapeHtml(v.docNumber), !v.docNumber)}
+        ${row('古物の特徴', escapeHtml(v.feature||''), !v.feature)}
+        ${row('現場情報（備考）', escapeHtml(v.siteNote||''), !v.siteNote)}
       </div>
     </div>
   `;
@@ -1528,6 +1688,28 @@ function wireStepInputs(){
       document.querySelectorAll('.rank-card').forEach(x => x.classList.toggle('selected', x.dataset.rank===c.dataset.rank));
     });
   });
+  // 仕入価格 ラジオ＋数値入力（v6.5）
+  const manualInput = document.getElementById('costManualInput');
+  document.querySelectorAll('input[name="costMode"]').forEach(r => {
+    r.addEventListener('change', () => {
+      if(!r.checked) return;
+      if(r.value === 'under100'){
+        state.newDraft.cost = 0;
+        if(manualInput){ manualInput.value = ''; manualInput.disabled = true; }
+      }else{
+        state.newDraft.cost = '';
+        if(manualInput){ manualInput.disabled = false; manualInput.focus(); }
+      }
+    });
+  });
+  if(manualInput){
+    manualInput.addEventListener('input', () => {
+      // 「個別入力」ラジオを自動選択
+      const r = document.querySelector('input[name="costMode"][value="manual"]');
+      if(r) r.checked = true;
+      state.newDraft.cost = manualInput.value;
+    });
+  }
   // Vendor type toggle
   document.querySelectorAll('#vendorTypeToggle button').forEach(b => {
     b.addEventListener('click', () => {
@@ -1546,8 +1728,10 @@ function validateStep(step){
   }else if(step===2){
     if(!d.rank){ toast('ランクを選択してください','warn'); return false; }
     if(!d.cond){ toast('状態を選択してください','warn'); return false; }
-    if(d.cost==='' || d.cost==null){ toast('仕入価格を入力してください','warn'); return false; }
-    if(Number(d.cost)<0){ toast('仕入価格は0以上で入力してください','warn'); return false; }
+    if(d.cost==='' || d.cost==null){ toast('仕入価格を選択または入力してください（100円未満 or 個別入力）','warn'); return false; }
+    const c = Number(d.cost);
+    if(c<0){ toast('仕入価格はマイナスにできません','warn'); return false; }
+    if(c>0 && c<100){ toast('1〜99円は「100円未満」を選択してください','warn'); return false; }
   }else if(step===3){
     // 古物台帳の取引相手情報はすべて任意入力（¥10,000 超のみ記載必須）。
     // 空欄のまま次へ進めるため、ここではバリデーションを行わない。
@@ -1630,7 +1814,10 @@ function renderDetailPanel(){
 
   // view mode
   const cat = CATS_MAP[p.cat] || {name:p.cat,icon:'ti-box'};
-  const statusCls = p.status==='販売済'?'sold': p.status==='キャンセル'?'cancel':'in';
+  const statusCls = p.status==='販売済'?'sold':
+    (p.status==='キャンセル'||p.status==='キャンセル・返品')?'cancel':
+    p.status==='出品中'?'listed':
+    'in';
   const v = p.vendor || {};
   const kv = (l,val) => `<dt>${l}</dt><dd class="${val?'':'empty'}">${val?escapeHtml(val):'(未入力)'}</dd>`;
   const profit = (p.salePrice!=='' && p.cost!=='') ? (Number(p.salePrice)-Number(p.cost)) : null;
@@ -1647,7 +1834,7 @@ function renderDetailPanel(){
 
     <div class="detail-actions" style="margin-bottom:18px;">
       <button class="btn btn-outline btn-sm" id="btnEdit"><i class="ti ti-pencil"></i>編集</button>
-      ${p.status==='在庫中' ? `<button class="btn btn-primary btn-sm" id="btnSale"><i class="ti ti-coin"></i>売上登録</button>` : ''}
+      ${(p.status==='在庫中' || p.status==='出品中') ? `<button class="btn btn-primary btn-sm" id="btnSale"><i class="ti ti-coin"></i>売上登録</button>` : ''}
       <button class="btn btn-ghost btn-sm" id="btnPrint"><i class="ti ti-printer"></i>QRコード印刷</button>
       <button class="btn btn-ghost btn-sm" id="btnDelete" style="color:var(--danger);"><i class="ti ti-trash"></i>削除</button>
     </div>
@@ -1660,7 +1847,7 @@ function renderDetailPanel(){
         ${kv('状態', p.cond)}
         ${kv('棚番号', p.shelf)}
         ${kv('入荷日', fmtDate(p.date))}
-        ${kv('仕入価格', fmtYen(p.cost))}
+        ${kv('仕入価格', fmtCost(p.cost))}
         ${kv('備考', p.desc)}
       </dl>
     </div>
@@ -1687,14 +1874,19 @@ function renderDetailPanel(){
     </div>
 
     <div class="detail-section">
-      <h3><i class="ti ti-book"></i>古物台帳情報</h3>
+      <h3><i class="ti ti-book"></i>古物台帳情報${requiresVendorRecord(p.cost, p.cat)?' <span class="req" style="font-size:11px;">（記録必須）</span>':''}</h3>
       <dl class="kv-grid">
-        ${kv('区分', v.type)}
+        ${kv('取引区分', v.dealType||'買受')}
+        ${kv('取引相手区分', v.type)}
         ${v.type==='法人' ? kv('会社名', v.company) : ''}
         ${kv(v.type==='法人'?'代表者氏名':'氏名', v.name)}
         ${kv('住所', v.address)}
+        ${kv('職業', v.occupation)}
+        ${kv('年齢', v.age)}
         ${kv('確認書類', v.docType)}
         ${kv('書類番号', v.docNumber)}
+        ${kv('古物の特徴', v.feature)}
+        ${kv('現場情報（備考）', v.siteNote)}
       </dl>
     </div>
   `;
@@ -1720,10 +1912,11 @@ function renderDetailEdit(p){
   const footer = document.getElementById('panelFooter');
   footer.style.display='flex';
 
+  const v = p.vendor || {};
   const catOpts = CATS.map(c => `<option value="${c.code}" ${p.cat===c.code?'selected':''}>${c.code} ${c.name}</option>`).join('');
   const rankOpts = ALL_RANKS.map(r => `<option value="${r}" ${p.rank===r?'selected':''}>${r}</option>`).join('');
   const condOpts = COND_OPTS.map(c => `<option value="${c}" ${p.cond===c?'selected':''}>${c}</option>`).join('');
-  const statusOpts = ['在庫中','販売済','キャンセル'].map(s => `<option value="${s}" ${p.status===s?'selected':''}>${s}</option>`).join('');
+  const statusOpts = ['在庫中','出品中','販売済','キャンセル・返品'].map(s => `<option value="${s}" ${p.status===s?'selected':''}>${s}</option>`).join('');
   const chOpts = ['', ...CHANNELS].map(c => `<option value="${c}" ${p.channel===c?'selected':''}>${c||'未設定'}</option>`).join('');
 
   body.innerHTML = `
@@ -1785,6 +1978,64 @@ function renderDetailEdit(p){
       <label class="lbl">備考</label>
       <textarea class="txt" id="e_desc">${escapeHtml(p.desc||'')}</textarea>
     </div>
+
+    <div class="divider"></div>
+    <h4 style="font-size:13px;font-weight:700;color:var(--text-sub);margin:0 0 12px;">
+      <i class="ti ti-book" style="vertical-align:-2px;"></i> 古物台帳情報を編集
+      ${requiresVendorRecord(p.cost, p.cat)?' <span class="req" style="font-size:11px;">（法的記録必須）</span>':''}
+    </h4>
+    <div class="row2">
+      <div class="field"><label class="lbl">取引区分</label>
+        <select class="txt" id="e_dealType">
+          ${['買受','委託','交換'].map(t => `<option value="${t}" ${(v.dealType||'買受')===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label class="lbl">取引相手区分</label>
+        <select class="txt" id="e_vtype">
+          <option value="個人" ${(v.type||'個人')==='個人'?'selected':''}>個人</option>
+          <option value="法人" ${v.type==='法人'?'selected':''}>法人</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label class="lbl">古物の特徴</label>
+      <textarea class="txt" id="e_feature" placeholder="例：赤 / Sサイズ / キズあり / CASIO製 / 品番EF-130D">${escapeHtml(v.feature||'')}</textarea>
+    </div>
+    <div class="row2">
+      <div class="field"><label class="lbl">会社名（法人時）</label>
+        <input type="text" class="txt" id="e_vcompany" value="${escapeHtml(v.company||'')}">
+      </div>
+      <div class="field"><label class="lbl">氏名 / 代表者氏名</label>
+        <input type="text" class="txt" id="e_vname" value="${escapeHtml(v.name||'')}">
+      </div>
+    </div>
+    <div class="field">
+      <label class="lbl">住所</label>
+      <input type="text" class="txt" id="e_vaddress" value="${escapeHtml(v.address||'')}">
+    </div>
+    <div class="row2">
+      <div class="field"><label class="lbl">職業</label>
+        <input type="text" class="txt" id="e_voccupation" value="${escapeHtml(v.occupation||'')}" placeholder="例：会社員 / 主婦">
+      </div>
+      <div class="field"><label class="lbl">年齢</label>
+        <input type="number" class="txt" id="e_vage" value="${escapeHtml(v.age||'')}" min="0" max="150" placeholder="半角数字">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field"><label class="lbl">確認書類</label>
+        <select class="txt" id="e_vdocType">
+          <option value="">選択なし</option>
+          ${DOC_TYPES.map(t => `<option value="${t}" ${v.docType===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label class="lbl">書類番号</label>
+        <input type="text" class="txt" id="e_vdocNumber" value="${escapeHtml(v.docNumber||'')}">
+      </div>
+    </div>
+    <div class="field">
+      <label class="lbl">現場情報（備考）<span class="opt">（後で必須項目を入力するための手がかりメモ）</span></label>
+      <textarea class="txt" id="e_vsiteNote" placeholder="例：○○リサイクル様より引取 / 伝票No.1234 / TUNAG現場ID">${escapeHtml(v.siteNote||'')}</textarea>
+    </div>
   `;
 
   footer.innerHTML = `
@@ -1810,6 +2061,19 @@ function renderDetailEdit(p){
     p.saleDate = v('e_saleDate');
     p.salePrice = v('e_salePrice')===''? '' : Number(v('e_salePrice'));
     p.desc = v('e_desc').trim();
+    // --- v6.1: 古物台帳情報も保存 ---
+    p.vendor = p.vendor || {};
+    p.vendor.dealType   = v('e_dealType');
+    p.vendor.type       = v('e_vtype');
+    p.vendor.feature    = v('e_feature').trim();
+    p.vendor.company    = v('e_vcompany').trim();
+    p.vendor.name       = v('e_vname').trim();
+    p.vendor.address    = v('e_vaddress').trim();
+    p.vendor.occupation = v('e_voccupation').trim();
+    p.vendor.age        = v('e_vage').trim();
+    p.vendor.docType    = v('e_vdocType');
+    p.vendor.docNumber  = v('e_vdocNumber').trim();
+    p.vendor.siteNote   = v('e_vsiteNote').trim();
     p.updatedAt = new Date().toISOString();
     saveProducts();
     toast('保存しました','success');
@@ -1830,7 +2094,7 @@ function renderDetailSale(p){
     <div style="margin-bottom:14px;">
       <div class="detail-id">${escapeHtml(p.id)}</div>
       <div style="font-size:15px;font-weight:700;margin-top:2px;">${escapeHtml(p.name)}</div>
-      <div class="text-mute" style="font-size:12px;">${cat.name} ／ ランク ${escapeHtml(p.rank||'')} ／ 仕入 ${fmtYen(p.cost)}</div>
+      <div class="text-mute" style="font-size:12px;">${cat.name} ／ ランク ${escapeHtml(p.rank||'')} ／ 仕入 ${fmtCost(p.cost)}</div>
     </div>
     <div class="sale-card">
       <h4><i class="ti ti-coin"></i>売上を登録</h4>
@@ -1891,7 +2155,7 @@ function deleteProduct(id){
    ・誤り訂正レベル M ／ 表示220px以上 ／ 白背景・黒モジュール
    =========================================================== */
 function buildQRPayload(p){
-  return `${p.id||''}|${p.name||''}|${p.rank||''}`;
+  return `${p.id||''}|${p.name||''}|${p.rank||''}|${p.shelf||''}`;
 }
 
 /**
@@ -2128,6 +2392,7 @@ function switchView(view){
   document.getElementById('viewInventory').classList.toggle('show', view === 'inventory');
   document.getElementById('viewVendor').classList.toggle('show', view === 'vendor');
   document.getElementById('viewImport').classList.toggle('show', view === 'import');
+  document.getElementById('viewShelves').classList.toggle('show', view === 'shelves');
   document.getElementById('viewSettings').classList.toggle('show', view === 'settings');
   // ヘッダー上のボタン（新規入荷／CSV）は商品台帳でのみ意味が強いが、
   // どのビューからも操作できる方が便利なため表示は維持する。
@@ -2137,6 +2402,7 @@ function switchView(view){
   else if(view === 'inventory') renderInventoryView();
   else if(view === 'vendor')    renderVendorView();
   else if(view === 'import')    renderImportView();
+  else if(view === 'shelves')   renderShelvesView();
   else if(view === 'settings')  renderSettingsView();
 }
 
@@ -2264,7 +2530,7 @@ function renderSalesView(){
                 <td>${p.rank?`<span class="rank-pill">${escapeHtml(p.rank)}</span>`:''}</td>
                 <td>${escapeHtml(p.channel||'')}</td>
                 <td>${escapeHtml(fmtDate(p.saleDate))}</td>
-                <td class="text-right">${fmtYen(p.cost)}</td>
+                <td class="text-right">${fmtCost(p.cost)}</td>
                 <td class="text-right">${fmtYen(p.salePrice)}</td>
                 <td class="text-right ${prCls}">${pr==null?'—':fmtYen(pr)}</td>
               </tr>`;
@@ -2566,7 +2832,7 @@ function renderAnalysisBudget(){
 function renderInventoryView(){
   const root = document.getElementById('viewInventory');
   // 在庫中の商品のみ対象
-  const inStock = state.products.filter(p => p.status === '在庫中');
+  const inStock = state.products.filter(p => isInStock(p));  // v6.4: 出品中も物理在庫として対象
   const filtered = state.invFilterCat ? inStock.filter(p => p.cat === state.invFilterCat) : inStock;
   const checkedCount = filtered.filter(p => state.invChecked[p.id]).length;
   const uncheckedCount = filtered.length - checkedCount;
@@ -2585,6 +2851,9 @@ function renderInventoryView(){
       <div class="view-title"><i class="ti ti-clipboard-check"></i>棚卸</div>
       <div class="view-actions">
         <select id="invMonth" class="filter-select" style="min-width:130px;">${monthOpts || '<option value="">候補なし</option>'}</select>
+        <button class="btn btn-outline" id="btnSyncScan" ${state.gas.url?'':'disabled'} title="${state.gas.url?'iPhoneでスキャンしたQR結果を取り込んでチェック済みに変換':'GASデプロイURLが未設定（設定タブで入力してください）'}">
+          <i class="ti ti-cloud-download"></i>スキャン結果を同期
+        </button>
         <button class="btn btn-outline" id="btnInvExcel"><i class="ti ti-file-spreadsheet"></i>棚卸Excel出力</button>
       </div>
     </div>
@@ -2643,6 +2912,9 @@ function renderInventoryView(){
   });
   // Excel出力
   document.getElementById('btnInvExcel').addEventListener('click', exportInventoryExcel);
+  // --- v6.2: スキャン結果同期 ---
+  const btnSync = document.getElementById('btnSyncScan');
+  if(btnSync) btnSync.addEventListener('click', syncScanToInvChecked);
 
   // 行クリック（→ チェックトグル）
   root.querySelectorAll('.inv-row').forEach(row => {
@@ -2659,6 +2931,97 @@ function renderInventoryView(){
 /* ===========================================================
    棚卸Excel出力（仕様書12章準拠）
    =========================================================== */
+/* ===========================================================
+   v6.2: スキャン結果同期
+   - GAS の inv_scan シートから当月対象のレコードを取得し、
+     PC側 invChecked に「追加」する（既存チェックは削除しない）。
+   - state.products に存在しない管理番号や、在庫中以外の商品は除外。
+   =========================================================== */
+async function syncScanToInvChecked(){
+  // (1) GAS未設定チェック
+  if(!state.gas || !state.gas.url){
+    toast('GASデプロイURLが未設定です（設定タブで入力してください）', 'warn');
+    return;
+  }
+  // (2) 対象月（state.invMonthが空なら今月）
+  const targetMonth = state.invMonth || thisMonthYM();
+  // 確認ダイアログ
+  const ok = confirm(
+    'GAS の inv_scan シートから ' + targetMonth + ' のスキャン結果を取得し、\n' +
+    '棚卸チェックリストに反映します。既存のチェック状態は上書きされません。実行しますか？'
+  );
+  if(!ok) return;
+
+  // ローディング状態に切替
+  const btn = document.getElementById('btnSyncScan');
+  const origHtml = btn ? btn.innerHTML : null;
+  if(btn){ btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader"></i>同期中...'; }
+
+  try{
+    // (3) GAS から inv_scan を取得
+    const rows = await gasApi.getInvScan();
+    if(!Array.isArray(rows)){
+      toast('スキャン結果の取得に失敗しました（応答形式が不正）', 'error');
+      return;
+    }
+
+    // (4) 対象月で絞り込み（inventory_month が空のレコードは後方互換で全件対象）
+    const targetRecords = rows.filter(r => {
+      const im = (r && r.inventory_month != null) ? String(r.inventory_month).trim() : '';
+      return im === '' || im === targetMonth;
+    });
+
+    // (5) invChecked へ反映（追加のみ・削除なし）
+    // 商品の存在＆在庫中チェック用のマップ
+    const inStockMap = new Map();
+    state.products.forEach(p => {
+      if(p && p.id && isInStock(p)) inStockMap.set(p.id, p);  // v6.4: 出品中も対象
+    });
+
+    let added = 0;       // 新規にチェック追加した件数
+    let alreadyChecked = 0; // すでにチェック済みだった件数
+    let unknown = 0;     // products に存在しない管理番号
+    let notInStock = 0;  // 存在するが在庫中ではない
+    const seen = new Set();
+
+    targetRecords.forEach(r => {
+      const id = r && r.scanned_id ? String(r.scanned_id).trim() : '';
+      if(!id) return;
+      if(seen.has(id)) return; // 同一IDの重複スキャンは1件として扱う
+      seen.add(id);
+      if(!inStockMap.has(id)){
+        // 存在しないか在庫中でないか
+        const exists = state.products.some(p => p.id === id);
+        if(!exists){ unknown++; } else { notInStock++; }
+        return;
+      }
+      if(state.invChecked[id]){ alreadyChecked++; return; }
+      state.invChecked[id] = true;
+      added++;
+    });
+
+    // (6) ローカル保存
+    saveInv();
+
+    // (7) トースト通知
+    const parts = [];
+    parts.push(added + ' 件をチェック済みにしました');
+    if(alreadyChecked > 0) parts.push('既存チェック ' + alreadyChecked + ' 件');
+    if(unknown > 0) parts.push('不明品 ' + unknown + ' 件はスキップ');
+    if(notInStock > 0) parts.push('在庫中以外 ' + notInStock + ' 件はスキップ');
+    toast('スキャン結果から ' + parts.join(' / '), 'success');
+
+  }catch(e){
+    console.error('[syncScanToInvChecked] failed', e);
+    toast('スキャン結果の同期に失敗: ' + (e && e.message || e), 'error');
+  }finally{
+    // ローディング状態を元に戻す
+    if(btn){ btn.disabled = !state.gas.url; if(origHtml!=null) btn.innerHTML = origHtml; }
+    // (8) 再描画
+    try { renderInventoryView(); } catch(_){}
+  }
+}
+
 function exportInventoryExcel(){
   const ym = state.invMonth;
   if(!ym){ toast('対象月を選択してください','warn'); return; }
@@ -2708,8 +3071,9 @@ function exportInventoryExcel(){
     const p = monthProducts[r-1];
     let fill = null, fontColor = null;
     if(p.status === '販売済')      fill = 'E6F1FB';
-    else if(p.status === 'キャンセル'){ fill = 'F1EFE8'; fontColor = '6B655A'; }
-    else if(p.status === '在庫中' && !state.invChecked[p.id]) fill = 'FAEEDA';
+    else if(p.status === 'キャンセル' || p.status === 'キャンセル・返品'){ fill = 'F1EFE8'; fontColor = '6B655A'; }
+    else if(p.status === '出品中')                                       { fill = 'FBEFD9'; }  // v6.4
+    else if(isInStock(p) && !state.invChecked[p.id])                      { fill = 'FAEEDA'; }
     for(let c=0; c<headers1.length; c++){
       const addr = XLSX.utils.encode_cell({r,c});
       if(!ws1[addr]) continue;
@@ -2727,8 +3091,9 @@ function exportInventoryExcel(){
 
   // --- シート2: 集計サマリー ---
   const inStock   = monthProducts.filter(p => p.status === '在庫中');
+  const listedList= monthProducts.filter(p => p.status === '出品中');
   const soldList  = monthProducts.filter(p => p.status === '販売済');
-  const cancelList= monthProducts.filter(p => p.status === 'キャンセル');
+  const cancelList= monthProducts.filter(p => p.status === 'キャンセル' || p.status === 'キャンセル・返品');
   const checkedN  = monthProducts.filter(p => state.invChecked[p.id]).length;
   const uncheckedN= inStock.filter(p => !state.invChecked[p.id]).length;
   const costSum   = monthProducts.reduce((s,p)=>s+Number(p.cost||0),0);
@@ -2741,8 +3106,9 @@ function exportInventoryExcel(){
     ['対象月', ymLabel(ym)],
     ['総商品数', monthProducts.length],
     ['在庫中', inStock.length],
+    ['出品中', listedList.length],
     ['販売済', soldList.length],
-    ['キャンセル', cancelList.length],
+    ['キャンセル・返品', cancelList.length],
     ['棚卸確認済', checkedN],
     ['棚卸未確認（在庫中）', uncheckedN],
     ['仕入総額', costSum],
@@ -2784,45 +3150,135 @@ function exportInventoryExcel(){
    =========================================================== */
 function renderVendorView(){
   const root = document.getElementById('viewVendor');
-  // 全登録商品を新しい順（createdAt降順、なければdate降順）でmax300件
-  const records = [...state.products]
-    .sort((a,b) => {
-      const ka = a.createdAt || a.date || '';
-      const kb = b.createdAt || b.date || '';
-      return kb.localeCompare(ka);
-    })
-    .slice(0, 300);
+  if(!state.vendorFilter) state.vendorFilter = { requiredOnly:false, expiringOnly:false };
+  const f = state.vendorFilter;
+
+  // 期限関連の判定
+  const THREE_YEARS_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+  const ONE_YEAR_MS    = 365 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const isExpired = p => {
+    if(!p.date) return false;
+    if(isInStock(p)) return false;  // v6.4: 出品中も対象外
+    const t = new Date(p.date).getTime();
+    if(isNaN(t)) return false;
+    return (now - t) >= THREE_YEARS_MS;
+  };
+  const isExpiringSoon = p => {
+    if(!p.date) return false;
+    if(isInStock(p)) return false;  // v6.4: 出品中も対象外
+    const t = new Date(p.date).getTime();
+    if(isNaN(t)) return false;
+    const diff = now - t;
+    return diff < THREE_YEARS_MS && diff >= (THREE_YEARS_MS - ONE_YEAR_MS);
+  };
+  const fmtLimit = p => {
+    if(!p.date) return '—';
+    const d = new Date(p.date);
+    if(isNaN(d.getTime())) return p.date;
+    d.setFullYear(d.getFullYear() + 3);
+    const yy = d.getFullYear();
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    return `${yy}/${mm}/${dd}`;
+  };
+
+  const expiredCount  = state.products.filter(isExpired).length;
+  const expiringCount = state.products.filter(isExpiringSoon).length;
+
+  // 並べ替え（新しい順）
+  let records = [...state.products].sort((a,b) => {
+    const ka = a.createdAt || a.date || '';
+    const kb = b.createdAt || b.date || '';
+    return kb.localeCompare(ka);
+  });
+  // フィルター適用
+  if(f.requiredOnly){
+    records = records.filter(p => requiresVendorRecord(p.cost, p.cat));
+  }
+  if(f.expiringOnly){
+    records = records.filter(p => isExpired(p) || isExpiringSoon(p));
+  }
 
   root.innerHTML = `
     <div class="view-header">
       <div class="view-title"><i class="ti ti-book"></i>古物台帳</div>
       <div class="view-actions">
-        <span style="font-size:12px;color:var(--text-mute);">古物営業法 第16条準拠の取引記録（最新${records.length}件 / 全${state.products.length}件）</span>
+        <span style="font-size:12px;color:var(--text-mute);">古物営業法 第16条準拠 — 表示 ${records.length}件 / 全 ${state.products.length}件</span>
       </div>
     </div>
+
+    <!-- 保存期限管理サマリーカード -->
+    <div class="import-card" style="margin-bottom:14px;">
+      <h3><i class="ti ti-clock"></i>保存期限管理（3年間保存義務）</h3>
+      <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:11.5px;color:var(--text-sub);font-weight:600;">期限切れ（削除対象）</div>
+          <div style="font-size:24px;font-weight:700;color:${expiredCount>0?'#B71C1C':'#176939'};">${expiredCount}件</div>
+        </div>
+        <div>
+          <div style="font-size:11.5px;color:var(--text-sub);font-weight:600;">期限まで1年以内</div>
+          <div style="font-size:24px;font-weight:700;color:${expiringCount>0?'#A06B00':'#5C6473'};">${expiringCount}件</div>
+        </div>
+        <div style="flex:1;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+          <button class="btn btn-outline btn-sm" id="btnVendorExpiringOnly">
+            <i class="ti ti-eye"></i>期限切れ・間近のみ表示
+          </button>
+          <button class="btn btn-danger btn-sm" id="btnVendorBulkDelete" ${expiredCount===0?'disabled':''}>
+            <i class="ti ti-trash"></i>期限切れ ${expiredCount}件を一括削除
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- フィルター -->
+    <div style="display:flex;gap:18px;margin-bottom:12px;font-size:12.5px;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="vfRequired" ${f.requiredOnly?'checked':''}>
+        記録必須のみ表示（¥10,000以上 or M/G部門）
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="vfExpiring" ${f.expiringOnly?'checked':''}>
+        期限切れ・1年以内のみ表示
+      </label>
+    </div>
+
     ${records.length === 0 ? `
-      <div class="empty-mini"><i class="ti ti-book-off"></i>取引記録がありません</div>
+      <div class="empty-mini"><i class="ti ti-book-off"></i>表示する取引記録がありません</div>
     ` : `
       <div class="data-table-wrap">
         <table class="data-table">
           <thead><tr>
-            <th>取引日</th><th>管理番号</th><th>品名</th><th>区分</th>
-            <th>取引相手氏名</th><th>住所</th><th>確認書類</th><th>取引種別</th>
+            <th>取引日</th><th>管理番号</th><th>品名</th>
+            <th>取引区分</th><th>個/法</th>
+            <th>取引相手</th><th>住所</th>
+            <th>職業</th><th>年齢</th>
+            <th>確認書類</th><th>古物の特徴</th>
+            <th>記録要否</th><th>保存期限</th>
           </tr></thead>
           <tbody>
             ${records.map(p => {
               const v = p.vendor || {};
               const isCorp = v.type === '法人';
               const name = isCorp ? (v.company ? `${v.company}${v.name?' / '+v.name:''}` : (v.name||'')) : (v.name||'');
-              return `<tr data-id="${escapeHtml(p.id)}" style="cursor:pointer;">
+              const required = requiresVendorRecord(p.cost, p.cat);
+              const expired = isExpired(p);
+              const expiringSoon = isExpiringSoon(p);
+              const limitStyle = expired ? 'color:#B71C1C;font-weight:700;' : (expiringSoon ? 'color:#A06B00;font-weight:600;' : '');
+              return `<tr data-id="${escapeHtml(p.id)}" style="cursor:pointer;${expired?'background:#FFF4F4;':''}">
                 <td>${escapeHtml(fmtDate(p.date))}</td>
                 <td class="id-cell">${escapeHtml(p.id)}</td>
                 <td>${escapeHtml(p.name||'')}</td>
+                <td>${escapeHtml(v.dealType||'買受')}</td>
                 <td><span class="vendor-pill ${isCorp?'houjin':'kojin'}">${escapeHtml(v.type||'個人')}</span></td>
                 <td>${name?escapeHtml(name):'<span class="text-mute">—</span>'}</td>
                 <td>${v.address?escapeHtml(v.address):'<span class="text-mute">—</span>'}</td>
+                <td>${v.occupation?escapeHtml(v.occupation):'<span class="text-mute">—</span>'}</td>
+                <td>${v.age?escapeHtml(v.age):'<span class="text-mute">—</span>'}</td>
                 <td>${v.docType?escapeHtml(v.docType)+(v.docNumber?' / '+escapeHtml(v.docNumber):''):'<span class="text-mute">—</span>'}</td>
-                <td>仕入</td>
+                <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${v.feature?escapeHtml(v.feature):'<span class="text-mute">—</span>'}</td>
+                <td>${required?'<span class="vendor-pill" style="background:#FBE9E1;color:#A04A14;">必須</span>':'<span class="vendor-pill" style="background:#F1F1F1;color:#888;">任意</span>'}</td>
+                <td style="${limitStyle}">${fmtLimit(p)}${expired?' <small>(超過)</small>':''}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -2830,10 +3286,107 @@ function renderVendorView(){
       </div>
     `}
   `;
+
   // 行クリック → 商品詳細
   root.querySelectorAll('tbody tr[data-id]').forEach(tr => {
     tr.addEventListener('click', () => openDetailPanel(tr.dataset.id));
   });
+  // フィルターハンドラ
+  const vfReq = document.getElementById('vfRequired');
+  if(vfReq) vfReq.addEventListener('change', () => {
+    state.vendorFilter.requiredOnly = vfReq.checked;
+    renderVendorView();
+  });
+  const vfExp = document.getElementById('vfExpiring');
+  if(vfExp) vfExp.addEventListener('change', () => {
+    state.vendorFilter.expiringOnly = vfExp.checked;
+    renderVendorView();
+  });
+  const btnExpOnly = document.getElementById('btnVendorExpiringOnly');
+  if(btnExpOnly) btnExpOnly.addEventListener('click', () => {
+    state.vendorFilter.expiringOnly = true;
+    renderVendorView();
+  });
+  const btnBulk = document.getElementById('btnVendorBulkDelete');
+  if(btnBulk) btnBulk.addEventListener('click', () => autoCleanExpiredProducts());
+}
+
+/* ===========================================================
+   v6.1: 保存期限自動削除関連
+   - getExpiredProducts: 入荷日から3年経過 かつ 在庫中以外
+   - autoCleanExpiredProducts: CSV出力→確認→削除のフロー
+   - confirmAndDelete: 最終確認後に削除
+   - exportExpiredCsv: 既存 exportCsv と同じフォーマットで期限切れ分のみ出力
+   =========================================================== */
+function getExpiredProducts(){
+  const THREE_YEARS_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  return state.products.filter(p => {
+    if(!p.date) return false;
+    if(isInStock(p)) return false;  // v6.4: 出品中も削除対象外
+    const t = new Date(p.date).getTime();
+    if(isNaN(t)) return false;
+    return (now - t) >= THREE_YEARS_MS;
+  });
+}
+
+function autoCleanExpiredProducts(){
+  const expired = getExpiredProducts();
+  if(expired.length === 0){
+    toast('期限切れの商品はありません', 'success');
+    return;
+  }
+  const doExport = confirm(
+    `保存期限（3年）を超過した商品が ${expired.length} 件あります。\n` +
+    `削除前にCSVファイルをダウンロードしますか？\n` +
+    `（「OK」でダウンロード後に削除確認、「キャンセル」で今回はスキップ）`
+  );
+  if(doExport){
+    exportExpiredCsv(expired);
+    setTimeout(() => confirmAndDelete(expired), 500);
+  }else{
+    confirmAndDelete(expired);
+  }
+}
+
+function confirmAndDelete(expired){
+  const ok = confirm(
+    `期限超過の ${expired.length} 件を削除してもよいですか？\n` +
+    `（この操作は取り消せません）`
+  );
+  if(!ok) return;
+  const expiredIds = new Set(expired.map(p => p.id));
+  state.products = state.products.filter(p => !expiredIds.has(p.id));
+  saveProducts();
+  toast(`期限切れ ${expired.length} 件を削除しました`, 'success');
+  renderTable();
+  if(state.currentView === 'vendor') renderVendorView();
+}
+
+function exportExpiredCsv(products){
+  if(!products || products.length === 0) return;
+  const headers = ['管理番号','商品名','部門','棚番号','ランク','入荷日','仕入価格','状態','ステータス','販路','販売日','売上価格','粗利','備考'];
+  const rows = products.map(p => {
+    const cat = CATS_MAP[p.cat]; const catName = cat ? cat.name : p.cat;
+    const profit = (p.salePrice!=='' && p.cost!=='') ? (Number(p.salePrice)-Number(p.cost)) : '';
+    return [p.id, p.name||'', `${p.cat||''} ${catName||''}`.trim(), p.shelf||'', p.rank||'', p.date||'', p.cost??'', p.cond||'', p.status||'', p.channel||'', p.saleDate||'', p.salePrice??'', profit, p.desc||''];
+  });
+  const esc = v => {
+    const s = (v==null?'':String(v));
+    if(/[",\n]/.test(s)) return '"'+s.replace(/"/g,'""')+'"';
+    return s;
+  };
+  const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  const bom = '﻿';
+  const blob = new Blob([bom+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const d = new Date();
+  const ymd = d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+  a.href = url; a.download = `期限超過商品_${ymd}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast('期限超過商品のCSVを出力しました', 'success');
 }
 
 
@@ -2870,10 +3423,12 @@ function normalizeImportStatus(raw){
   const v = String(raw||'').trim();
   if(!v) return '在庫中';
   if(v.includes('売上確定')) return '販売済';
-  if(v.includes('キャンセル') || v.includes('返品')) return 'キャンセル';
-  if(v.includes('出品中') || v.includes('出品前') || v.includes('選択式')) return '在庫中';
+  if(v.includes('キャンセル') || v.includes('返品')) return 'キャンセル・返品';
+  if(v.includes('出品中')) return '出品中';  // v6.4: 出品中を保持
+  if(v.includes('出品前') || v.includes('選択式')) return '在庫中';
   // 既知のラベルがそのまま入っていればそれを採用
-  if(v === '在庫中' || v === '販売済' || v === 'キャンセル') return v;
+  if(v === '在庫中' || v === '出品中' || v === '販売済' || v === 'キャンセル・返品') return v;
+  if(v === 'キャンセル') return 'キャンセル・返品';  // 旧形式の自動置換
   // それ以外は在庫中扱い
   return '在庫中';
 }
@@ -3395,6 +3950,7 @@ function stripImportMeta(p){
      ローカル保存後にGASへも自動送信。本宣言は無変更。
    =========================================================== */
 
+const LS_SHELVES = 'fc_shelves_v1';   // v6.3: 棚マスタ
 const LS_GAS = 'fc_gas_url';
 
 /* ========== 設定の localStorage 永続化 ========== */
@@ -3830,6 +4386,482 @@ function wireSettingsEvents(){
 }
 
 
+
+/* ===========================================================
+   ===== v6.3: 棚マスタ管理（府中センター棚住所体系） =====
+   棚QR形式: SHELF|<棚コード>
+   例:       SHELF|FC-S-03-01-03
+   localStorage キー: fc_shelves_v1（既存LSキーには触れない）
+   =========================================================== */
+
+const SHELF_AREA_NAMES = {
+  'S': '販売',
+  'N': '北側',
+  'A': '変更不可',
+};
+
+/* v6.4: 旧「キャンセル」ステータスを「キャンセル・返品」に自動置換 */
+function migrateLegacyCancelStatus(){
+  let changed = 0;
+  state.products.forEach(p => {
+    if(p && p.status === 'キャンセル'){
+      p.status = 'キャンセル・返品';
+      changed++;
+    }
+  });
+  if(changed > 0){
+    saveProducts();
+    console.log('[v6.4] migrated ' + changed + ' records: キャンセル → キャンセル・返品');
+  }
+}
+
+function loadShelves(){
+  try{
+    const raw = localStorage.getItem(LS_SHELVES);
+    if(raw){
+      const arr = JSON.parse(raw);
+      if(Array.isArray(arr)) state.shelves = arr;
+    }
+  }catch(e){ console.warn('[shelves] load failed', e); }
+}
+function saveShelves(){
+  try{
+    localStorage.setItem(LS_SHELVES, JSON.stringify(state.shelves));
+  }catch(e){
+    console.error('[shelves] save failed', e);
+    toast('棚マスタの保存に失敗（容量超過の可能性）', 'error');
+  }
+}
+
+/* 棚QRペイロード生成 */
+function buildShelfQRPayload(shelf){
+  return 'SHELF|' + (shelf.code || '');
+}
+
+/* 棚コード → エリア記号 抽出（FC-S-03-01-03 → 'S'） */
+function shelfAreaOf(code){
+  if(!code) return '';
+  const m = String(code).match(/^FC-([SNA])-/);
+  return m ? m[1] : '';
+}
+function shelfIsGolden(level){
+  // 段03・段04 がゴールデンゾーン
+  const n = parseInt(String(level||'').replace(/\D/g,''),10);
+  return n === 3 || n === 4;
+}
+
+/* ===========================================================
+   棚マスタビューの描画
+   =========================================================== */
+function renderShelvesView(){
+  const root = document.getElementById('viewShelves');
+  const f = state.shelvesFilter;
+
+  // フィルタ適用
+  let list = [...state.shelves];
+  if(f.area)        list = list.filter(x => shelfAreaOf(x.code) === f.area);
+  if(f.goldenOnly)  list = list.filter(x => shelfIsGolden(x.level));
+  if(f.query){
+    const q = f.query.toLowerCase();
+    list = list.filter(x =>
+      (x.code||'').toLowerCase().includes(q) ||
+      (x.note||'').toLowerCase().includes(q));
+  }
+
+  // エリア別集計
+  const byArea = {S:0, N:0, A:0};
+  state.shelves.forEach(x => {
+    const a = shelfAreaOf(x.code);
+    if(byArea[a] !== undefined) byArea[a]++;
+  });
+
+  const areaOpts = ['','S','N','A'].map(a =>
+    `<option value="${a}" ${f.area===a?'selected':''}>${a?(a+' / '+SHELF_AREA_NAMES[a]+'エリア'):'すべてのエリア'}</option>`
+  ).join('');
+
+  root.innerHTML = `
+    <div class="view-header">
+      <div class="view-title"><i class="ti ti-rectangular-prism"></i>棚マスタ — 棚住所体系（${state.shelves.length}番地）</div>
+      <div class="view-actions">
+        <span style="font-size:12px;color:var(--text-mute);">表示 ${list.length}件</span>
+      </div>
+    </div>
+
+    <!-- エリア別件数カード -->
+    <div class="shelf-grid">
+      <div class="shelf-stat-card S"><div class="lbl">販売エリア (S)</div><div class="val">${byArea.S}</div></div>
+      <div class="shelf-stat-card N"><div class="lbl">北側エリア (N)</div><div class="val">${byArea.N}</div></div>
+      <div class="shelf-stat-card A"><div class="lbl">変更不可エリア (A)</div><div class="val">${byArea.A}</div></div>
+      <div class="shelf-stat-card"><div class="lbl">合計番地数</div><div class="val">${state.shelves.length}</div></div>
+    </div>
+
+    <!-- インポート / 全削除 -->
+    <div class="import-card" style="margin-bottom:12px;">
+      <h3><i class="ti ti-upload"></i>棚マスタの一括取込（Excel）</h3>
+      <div class="card-desc">「📍採番マスター（全棚住所）」シートを含む Excel をドラッグ&ドロップしてください。同名コードは上書き、新規コードは追加されます。</div>
+      <label class="dropzone" id="shelfDropzone" for="shelfFile">
+        <i class="ti ti-cloud-upload"></i>
+        <div class="dz-main">ここに Excel をドロップ または クリックして選択</div>
+        <div class="dz-sub">対応形式: .xlsx / .xls（採番マスターシートを自動検出）</div>
+        <input type="file" id="shelfFile" accept=".xlsx,.xls">
+      </label>
+      <div class="map-actions" style="margin-top:10px;">
+        <button class="btn btn-ghost btn-sm" id="shelfClearAll"><i class="ti ti-trash"></i>棚マスタを全削除</button>
+        <button class="btn btn-outline btn-sm" id="shelfExportCsv"><i class="ti ti-file-export"></i>棚マスタCSV出力</button>
+      </div>
+    </div>
+
+    <!-- フィルター・印刷 -->
+    <div class="shelf-toolbar">
+      <div class="filter-group">
+        <label style="font-size:11.5px;color:var(--text-sub);">エリア</label>
+        <select id="shelfFilterArea" class="filter-select">${areaOpts}</select>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
+        <input type="checkbox" id="shelfFilterGolden" ${f.goldenOnly?'checked':''}>
+        ゴールデンゾーン（段03・04）のみ
+      </label>
+      <input type="search" id="shelfQuery" class="filter-select" placeholder="棚コード・備考で検索" value="${escapeHtml(f.query||'')}" style="min-width:200px;">
+      <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm" id="shelfPrintBulk" ${list.length===0?'disabled':''}>
+        <i class="ti ti-printer"></i>絞り込み結果を一括印刷（${list.length}件）
+      </button>
+    </div>
+
+    <!-- 棚一覧テーブル -->
+    ${list.length === 0 ? `
+      <div class="empty-mini">
+        <i class="ti ti-rectangular-prism-off"></i>
+        <div>${state.shelves.length === 0 ? '棚マスタ未登録。Excel取込から始めてください。' : '絞り込み結果が0件'}</div>
+      </div>
+    ` : `
+      <div class="shelf-list-table-wrap">
+        <table class="shelf-list-table">
+          <thead><tr>
+            <th>棚コード</th><th>エリア</th><th>列</th><th>行</th><th>段</th><th>備考</th><th>QR例</th><th>操作</th>
+          </tr></thead>
+          <tbody>
+            ${list.map(x => {
+              const area = shelfAreaOf(x.code);
+              const golden = shelfIsGolden(x.level);
+              return `<tr class="${golden?'gold':''}">
+                <td class="code">${escapeHtml(x.code)}</td>
+                <td><span class="shelf-area-pill ${area}">${area} ${SHELF_AREA_NAMES[area]||''}</span></td>
+                <td>${escapeHtml(x.col||'')}</td>
+                <td>${escapeHtml(x.row||'')}</td>
+                <td>${escapeHtml(x.level||'')}${golden?' ★':''}</td>
+                <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(x.note||'')}</td>
+                <td style="font-family:Menlo,Consolas,monospace;font-size:10.5px;color:var(--text-mute);">${escapeHtml(buildShelfQRPayload(x))}</td>
+                <td>
+                  <button class="btn btn-ghost btn-sm" data-print="${escapeHtml(x.code)}"><i class="ti ti-printer"></i></button>
+                  <button class="btn btn-ghost btn-sm" data-del="${escapeHtml(x.code)}" style="color:var(--danger);"><i class="ti ti-trash"></i></button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `}
+  `;
+
+  wireShelvesEvents();
+}
+
+function wireShelvesEvents(){
+  const fz = document.getElementById('shelfDropzone');
+  const fi = document.getElementById('shelfFile');
+  if(fi) fi.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if(f) handleShelfImport(f);
+  });
+  if(fz){
+    ['dragenter','dragover'].forEach(ev => fz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); fz.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(ev => fz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); fz.classList.remove('drag'); }));
+    fz.addEventListener('drop', e => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if(f) handleShelfImport(f);
+    });
+  }
+  const fa = document.getElementById('shelfFilterArea');
+  if(fa) fa.addEventListener('change', () => { state.shelvesFilter.area = fa.value; renderShelvesView(); });
+  const fg = document.getElementById('shelfFilterGolden');
+  if(fg) fg.addEventListener('change', () => { state.shelvesFilter.goldenOnly = fg.checked; renderShelvesView(); });
+  const fq = document.getElementById('shelfQuery');
+  if(fq) fq.addEventListener('input', () => { state.shelvesFilter.query = fq.value; renderShelvesView(); });
+  const cl = document.getElementById('shelfClearAll');
+  if(cl) cl.addEventListener('click', () => {
+    if(!confirm('棚マスタを全削除します。元に戻せません。実行しますか？')) return;
+    state.shelves = [];
+    saveShelves();
+    toast('棚マスタを全削除しました');
+    renderShelvesView();
+  });
+  const ec = document.getElementById('shelfExportCsv');
+  if(ec) ec.addEventListener('click', exportShelvesCsv);
+  const pb = document.getElementById('shelfPrintBulk');
+  if(pb) pb.addEventListener('click', () => {
+    const f = state.shelvesFilter;
+    let list = [...state.shelves];
+    if(f.area) list = list.filter(x => shelfAreaOf(x.code) === f.area);
+    if(f.goldenOnly) list = list.filter(x => shelfIsGolden(x.level));
+    if(f.query){
+      const q = f.query.toLowerCase();
+      list = list.filter(x => (x.code||'').toLowerCase().includes(q) || (x.note||'').toLowerCase().includes(q));
+    }
+    askShelfPrintLayout(list);
+  });
+  document.querySelectorAll('#viewShelves [data-print]').forEach(b => {
+    b.addEventListener('click', () => {
+      const code = b.dataset.print;
+      const shelf = state.shelves.find(x => x.code === code);
+      if(shelf) printShelfLabels([shelf], 1);
+    });
+  });
+  document.querySelectorAll('#viewShelves [data-del]').forEach(b => {
+    b.addEventListener('click', () => {
+      const code = b.dataset.del;
+      if(!confirm('棚 ' + code + ' を削除しますか？')) return;
+      state.shelves = state.shelves.filter(x => x.code !== code);
+      saveShelves();
+      renderShelvesView();
+    });
+  });
+}
+
+/* ===========================================================
+   Excel 取込（採番マスターシート対応）
+   - 「📍採番マスター」のようにシート名で検出、失敗時は全シート走査
+   - 「棚住所」を含むヘッダー行を見つけて以降をデータ行として処理
+   =========================================================== */
+function handleShelfImport(file){
+  if(!/\.(xlsx|xls)$/i.test(file.name||'')){
+    toast('対応していないファイル形式です（.xlsx / .xls のみ）','error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: 'array', cellDates: false });
+      // 採番マスターのシートを優先的に検出
+      let targetSheet = null;
+      for(const name of wb.SheetNames){
+        if(name.includes('採番マスター')){ targetSheet = name; break; }
+      }
+      if(!targetSheet) targetSheet = wb.SheetNames[0];
+
+      const ws = wb.Sheets[targetSheet];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+
+      // ヘッダー行の検出（厳格化版）
+      // 「棚住所」を含むセル AND 「エリア」を含むセル の両方が同行に必要。
+      // これにより、タイトル行の「合計235番地」のような誤検出を防ぐ。
+      let headerRow = -1;
+      let cols = { id:-1, area:-1, col:-1, row:-1, level:-1, note:-1 };
+      for(let i = 0; i < Math.min(rows.length, 25); i++){
+        const r = rows[i] || [];
+        const headers = r.map(v => String(v||'').trim());
+        // 「棚住所」「棚コード」「番地」の単語でかつ短いセル（タイトル混入を回避）
+        const idxId = headers.findIndex(h =>
+          h === '棚住所' || h === '棚住所（番地）' || h === '棚コード' || h === '番地' ||
+          (h.length <= 12 && (h.startsWith('棚住所') || h.startsWith('番地')))
+        );
+        // 「エリア」が短いセルで存在
+        const idxArea = headers.findIndex(h =>
+          h === 'エリア' || (h.length <= 8 && h.startsWith('エリア'))
+        );
+        if(idxId >= 0 && idxArea >= 0){
+          headerRow = i;
+          cols.id    = idxId;
+          cols.area  = idxArea;
+          cols.col   = headers.findIndex(h => h === '列' || (h.length <= 8 && h.startsWith('列')));
+          cols.row   = headers.findIndex(h => h === '行' || (h.length <= 8 && h.startsWith('行')));
+          cols.level = headers.findIndex(h => h === '段' || (h.length <= 8 && h.startsWith('段')));
+          cols.note  = headers.findIndex(h => h === '備考' || (h.length <= 8 && h.startsWith('備考')));
+          break;
+        }
+      }
+
+      if(headerRow === -1){
+        toast('「棚住所」と「エリア」のヘッダー行が同じ行に見つかりません。採番マスターシートの構成をご確認ください。','error');
+        return;
+      }
+
+      // データ行を抽出
+      const parsed = [];
+      for(let i = headerRow + 1; i < rows.length; i++){
+        const r = rows[i] || [];
+        const code = String(r[cols.id]||'').trim();
+        if(!code.startsWith('FC-')) continue;
+        parsed.push({
+          code,
+          area:  cols.area>=0  ? String(r[cols.area]||'').trim()  : '',
+          col:   cols.col>=0   ? String(r[cols.col]||'').trim()   : '',
+          row:   cols.row>=0   ? String(r[cols.row]||'').trim()   : '',
+          level: cols.level>=0 ? String(r[cols.level]||'').trim() : '',
+          note:  cols.note>=0  ? String(r[cols.note]||'').trim()  : '',
+        });
+      }
+
+      if(parsed.length === 0){
+        toast('FC- で始まる棚コードが見つかりませんでした','warn');
+        return;
+      }
+
+      const ok = confirm(
+        'シート「' + targetSheet + '」から ' + parsed.length + ' 件の棚を読み込みました。\n' +
+        '現在のマスタ ' + state.shelves.length + ' 件 → 取込後 ' + parsed.length + ' 件 に置き換えます。\n' +
+        '実行しますか？'
+      );
+      if(!ok) return;
+
+      state.shelves = parsed;
+      saveShelves();
+      toast('棚マスタを ' + parsed.length + ' 件取り込みました','success');
+      renderShelvesView();
+    }catch(err){
+      console.error('[shelves import] failed', err);
+      toast('取込に失敗: ' + (err.message||err),'error');
+    }
+  };
+  reader.onerror = () => toast('ファイル読込エラー','error');
+  reader.readAsArrayBuffer(file);
+}
+
+/* 棚マスタ CSV出力（簡易バックアップ用） */
+function exportShelvesCsv(){
+  if(state.shelves.length === 0){ toast('棚マスタが空です','warn'); return; }
+  const headers = ['棚コード','エリア','列','行','段','備考'];
+  const rows = state.shelves.map(x => [x.code, x.area||'', x.col||'', x.row||'', x.level||'', x.note||'']);
+  const esc = v => {
+    const s = (v==null?'':String(v));
+    if(/[",\n]/.test(s)) return '"'+s.replace(/"/g,'""')+'"';
+    return s;
+  };
+  const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  const bom = '﻿';
+  const blob = new Blob([bom+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const d = new Date();
+  const ymd = d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+  a.href = url; a.download = `棚マスタ_${ymd}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast('棚マスタCSVを出力しました','success');
+}
+
+/* ===========================================================
+   棚QRラベル印刷
+   - レイアウト: 1棚/4棚/8棚/12棚 per A4
+   - QR本体は qrcode-generator + Canvas で描画（既存QR実装と同じ）
+   =========================================================== */
+function askShelfPrintLayout(list){
+  if(!list || list.length === 0){ toast('印刷対象がありません','warn'); return; }
+  const choices = [
+    { v:1,  label:'1棚 / A4（大）— 単独ラベル' },
+    { v:4,  label:'4棚 / A4（中）— 2×2グリッド' },
+    { v:8,  label:'8棚 / A4（小）— 2×4グリッド' },
+    { v:12, label:'12棚 / A4（極小）— 3×4グリッド' },
+  ];
+  let msg = '印刷レイアウトを選んでください（番号を入力）:\n';
+  choices.forEach((c,i) => { msg += '  ' + (i+1) + ') ' + c.label + '\n'; });
+  msg += '\n対象: ' + list.length + ' 件';
+  const inp = prompt(msg, '2');
+  if(inp == null) return;
+  const sel = parseInt(inp, 10);
+  if(!sel || sel < 1 || sel > choices.length){ toast('番号が不正です','warn'); return; }
+  printShelfLabels(list, choices[sel-1].v);
+}
+
+function printShelfLabels(shelves, perPage){
+  if(!shelves || shelves.length === 0){ toast('印刷対象がありません','warn'); return; }
+  perPage = perPage || 4;
+
+  // ページ分割
+  const pages = [];
+  for(let i = 0; i < shelves.length; i += perPage){
+    pages.push(shelves.slice(i, i + perPage));
+  }
+
+  // グリッド設定
+  const gridMap = {
+    1:  { cols:1, qrSize:380, fontCode:32, fontNote:14, padding:'40px' },
+    4:  { cols:2, qrSize:240, fontCode:20, fontNote:11, padding:'18px' },
+    8:  { cols:2, qrSize:170, fontCode:15, fontNote:10, padding:'12px' },
+    12: { cols:3, qrSize:140, fontCode:13, fontNote:9,  padding:'10px' },
+  };
+  const g = gridMap[perPage] || gridMap[4];
+
+  // 印刷ウィンドウを開く
+  const w = window.open('', '_blank', 'width=1000,height=800');
+  if(!w){ toast('ポップアップがブロックされました（許可してください）','error'); return; }
+
+  // QR Canvas 描画 → DataURL を取得して img として埋め込む
+  // qrcode-generator を使うため、ペイロードごとに Canvas を作成
+  const qrImgs = shelves.map(sh => {
+    try{
+      const payload = buildShelfQRPayload(sh);
+      const cv = document.createElement('canvas');
+      drawQRToCanvas(cv, payload, g.qrSize);
+      return cv.toDataURL('image/png');
+    }catch(e){
+      console.error('shelf QR error', sh, e);
+      return '';
+    }
+  });
+
+  // HTML 組み立て
+  const labelHtml = (sh, dataUrl) => {
+    const area = shelfAreaOf(sh.code);
+    const golden = shelfIsGolden(sh.level);
+    const areaLabel = SHELF_AREA_NAMES[area] || area;
+    return `
+      <div class="lbl" style="text-align:center;padding:${g.padding};border:2px solid #000;border-radius:8px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;break-inside:avoid;">
+        <div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:${g.fontCode}px;font-weight:900;letter-spacing:1px;margin-bottom:4px;">${sh.code}</div>
+        <div style="font-size:${g.fontNote}px;color:#444;margin-bottom:8px;">
+          ${areaLabel}エリア / 列${sh.col||'-'} / 行${sh.row||'-'} / ${sh.level||'-'}${golden?' ★':''}
+        </div>
+        <img src="${dataUrl}" style="width:${g.qrSize}px;height:${g.qrSize}px;display:block;" alt="${sh.code}">
+        <div style="font-size:${Math.max(8,g.fontNote-1)}px;color:#888;margin-top:6px;font-family:Menlo,Consolas,monospace;">SHELF|${sh.code}</div>
+      </div>`;
+  };
+
+  const pagesHtml = pages.map((pg, pi) => {
+    const startIdx = pi * perPage;
+    return `<div class="shelf-print-page" style="display:grid;grid-template-columns:repeat(${g.cols},1fr);gap:14px;padding:14px;width:100%;">
+      ${pg.map((sh, si) => labelHtml(sh, qrImgs[startIdx + si])).join('')}
+    </div>`;
+  }).join('');
+
+  w.document.write(`<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><title>棚QRラベル印刷</title>
+<style>
+  *{box-sizing:border-box;}
+  @page{size:A4;margin:8mm;}
+  body{margin:0;padding:0;font-family:-apple-system,sans-serif;background:#f5f5f5;}
+  .toolbar{position:sticky;top:0;background:#fff;padding:10px;text-align:center;border-bottom:1px solid #ccc;z-index:10;}
+  .toolbar button{padding:8px 20px;font-size:14px;cursor:pointer;border:1px solid #185FA5;background:#185FA5;color:#fff;border-radius:6px;}
+  .shelf-print-page{background:#fff;margin:10mm auto;max-width:190mm;}
+  @media print {
+    .toolbar{display:none;}
+    body{background:#fff;}
+    .shelf-print-page{margin:0;page-break-after:always;}
+    .shelf-print-page:last-child{page-break-after:auto;}
+  }
+</style></head>
+<body>
+  <div class="toolbar">
+    <button onclick="window.print()">この内容で印刷する</button>
+    &nbsp;対象: ${shelves.length}件 / レイアウト: ${perPage}棚/A4 / ページ数: ${pages.length}
+  </div>
+  ${pagesHtml}
+</body></html>`);
+  w.document.close();
+  // 印刷ダイアログは手動でユーザーが起動
+}
+
+
 /* ===========================================================
    タブイベント配線
    =========================================================== */
@@ -3852,6 +4884,17 @@ function init(){
   loadGasConfig();
   gasInstallDualPatch();
   updateHeaderCloudStatus();
+  // --- v6.3: 棚マスタの読込 ---
+  loadShelves();
+  // --- v6.4: 旧ステータス「キャンセル」を「キャンセル・返品」に自動マイグレーション ---
+  migrateLegacyCancelStatus();
+  // --- v6.1: 古物営業法 第16条 保存期限チェック（起動時通知のみ・削除はユーザー確認） ---
+  setTimeout(() => {
+    const expiredCount = getExpiredProducts().length;
+    if(expiredCount > 0){
+      toast(`保存期限超過の商品が ${expiredCount} 件あります。古物台帳タブで確認してください`, 'warn');
+    }
+  }, 500);
 }
 init();
 </script>
